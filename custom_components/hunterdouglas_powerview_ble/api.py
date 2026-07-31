@@ -305,7 +305,10 @@ class PowerViewBLE:
         pos2: Final[int] = (int(data[5]) << 4) + (int(data[4]) >> 4)
         return {
             ATTR_CURRENT_POSITION: pos / 10,
-            "position2": pos2 >> 2,
+            # normalized to the same 0-100 percent scale as ATTR_CURRENT_POSITION
+            # (pos2 is also a 10-bit field after the >>2, same width as pos1) --
+            # inferred by symmetry, not yet confirmed against real TDBU hardware
+            "position2": (pos2 >> 2) / 10,
             "position3": int(data[6]),
             ATTR_CURRENT_TILT_POSITION: int(data[7]),
             "home_id": int.from_bytes(data[0:2], byteorder="little"),
@@ -338,11 +341,16 @@ class PowerViewBLE:
             tilt,
             velocity,
         )
+        # pos2 is another lift-rail position, like pos1 -- not a rotation like
+        # tilt -- so it gets the same *100 fixed-point wire encoding as pos1.
+        # 0x8000 is the device's "leave unchanged" sentinel and must pass
+        # through unmultiplied.
+        pos2_wire = pos2 if pos2 == 0x8000 else pos2 * 100
         await self._cmd(
             (
                 ShadeCmd.SET_POSITION,
                 int.to_bytes(pos1 * 100, 2, byteorder="little")
-                + int.to_bytes(pos2, 2, byteorder="little")
+                + int.to_bytes(pos2_wire, 2, byteorder="little")
                 + int.to_bytes(pos3, 2, byteorder="little")
                 + int.to_bytes(tilt, 2, byteorder="little")
                 + int.to_bytes(velocity, 1),

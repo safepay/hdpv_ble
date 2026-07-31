@@ -40,6 +40,11 @@ def _add_entities(
         entities = [PowerViewCoverTilt(coordinator)]
     elif caps.is_top_down:
         entities = [PowerViewCoverTopDown(coordinator)]
+    elif caps.is_tdbu:
+        entities = [
+            PowerViewCoverTDBUBottom(coordinator),
+            PowerViewCoverTDBUTop(coordinator),
+        ]
     else:
         entities = [PowerViewCover(coordinator)]
 
@@ -418,3 +423,154 @@ class PowerViewCoverTiltOnly(PowerViewCoverTilt):
             or self.current_cover_tilt_position
             <= CLOSED_POSITION + PowerViewCoverTiltOnly.OPENCLOSED_THRESHOLD
         )
+
+
+class PowerViewCoverTDBUBottom(PowerViewCover):
+    """Rail driven by position1/primary of a dual-rail Top-Down/Bottom-Up shade.
+
+    The official Hunter Douglas PowerView integration in home-assistant/core
+    (hunterdouglas_powerview) names the primary-position rail "bottom" and
+    the secondary-position rail "top", but that's over the WiFi hub API, not
+    BLE -- on this BLE firmware it's confirmed reversed: this class (driven
+    by position1) is physically the TOP rail. The class/unique_id keep the
+    position1-based "Bottom" name for internal consistency; only the
+    user-facing name is swapped below.
+
+    Also confirmed: on this firmware position1 uses the same inverted
+    raw-position convention as PowerViewCoverTopDown (device 0 = open/
+    retracted, device 100 = closed/extended), opposite of the "Bottom rail"
+    (position2) entity -- reported as the two rails moving in opposite
+    directions for the same target percentage. Inverted at the boundary so
+    HA's standard 0=closed/100=open is preserved, same as PowerViewCoverTopDown.
+    """
+
+    def __init__(self, coordinator: PVCoordinator) -> None:
+        """Initialize the rail."""
+        LOGGER.debug("%s: init() PowerViewCoverTDBUBottom", coordinator.name)
+        super().__init__(coordinator)
+        self._attr_name = "Top rail"
+        self._attr_unique_id = f"{self._attr_unique_id}_bottom"
+
+    @property
+    def current_cover_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return current position, inverting the device axis."""
+        pos = self._fresh_position(ATTR_CURRENT_POSITION)
+        return OPEN_POSITION - pos if pos is not None else None
+
+    async def async_set_cover_position(self, **kwargs: Any) -> None:
+        """Move the rail, inverting for the device, clamped against the other rail."""
+        target_position: Final = kwargs.get(ATTR_POSITION)
+        if target_position is None:
+            return
+        top_position = self._fresh_position("position2")
+        if top_position is None:
+            return
+        clamped = min(round(target_position), OPEN_POSITION - top_position)
+        inverted = OPEN_POSITION - clamped
+        LOGGER.debug(
+            "set top-rail cover to position %f (device %i)", target_position, inverted
+        )
+        if self.current_cover_position == clamped and not (
+            self.is_closing or self.is_opening
+        ):
+            return
+        self._target_position = clamped
+        try:
+            await self._coord.api.set_position(
+                inverted,
+                velocity=self._coord.velocity,
+            )
+            self.async_write_ha_state()
+        except BleakError as err:
+            LOGGER.error(
+                "Failed to move top-rail cover '%s' to %f%%: %s",
+                self.name,
+                target_position,
+                err,
+            )
+
+    async def async_open_cover(self, **kwargs: Any) -> None:
+        """Open the rail (send device position 0), clamped against the other rail."""
+        LOGGER.debug("open top-rail cover")
+        await self.async_set_cover_position(**{ATTR_POSITION: OPEN_POSITION})
+
+    async def async_close_cover(self, **kwargs: Any) -> None:
+        """Close the rail (send device position 100)."""
+        LOGGER.debug("close top-rail cover")
+        await self.async_set_cover_position(**{ATTR_POSITION: CLOSED_POSITION})
+
+
+class PowerViewCoverTDBUTop(PowerViewCover):
+    """Rail driven by position2/secondary of a dual-rail Top-Down/Bottom-Up shade.
+
+    TDBU shades (type 8/9/33/47) have two independently-movable rails, but
+    the API previously only ever exposed one cover entity, driven off
+    position1. This drives the second rail via the "position2" field that
+    dec_manufacturer_data() decodes but nothing else consumed.
+
+    See PowerViewCoverTDBUBottom for naming caveats -- on this BLE firmware
+    this class (driven by position2) is confirmed to be the physical BOTTOM
+    rail, so only its user-facing name is swapped below. Move it in small
+    steps from its current position first, watching the shade, before
+    trusting a jump to 0 or 100.
+    """
+
+    def __init__(self, coordinator: PVCoordinator) -> None:
+        """Initialize the rail."""
+        LOGGER.debug("%s: init() PowerViewCoverTDBUTop", coordinator.name)
+        super().__init__(coordinator)
+        self._attr_name = "Bottom rail"
+        self._attr_unique_id = f"{self._attr_unique_id}_top"
+        self._target_position = self._fresh_position("position2") or OPEN_POSITION
+
+    @property
+    def current_cover_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return current position of the bottom rail."""
+        return self._fresh_position("position2")
+
+    async def async_set_cover_position(self, **kwargs: Any) -> None:
+        """Move the bottom rail, clamped so it can't pass through the top rail.
+
+        PowerViewCoverTDBUBottom (the "Top rail" entity) inverts position1 to
+        get its own HA-facing position (top_ha = 100 - raw_pos1). The
+        collision constraint is bottom_target <= 100 - top_ha, which
+        substitutes to bottom_target <= raw_pos1 -- so this clamps directly
+        against the raw position1 reading, not against 100 - raw_pos1.
+        """
+        target_position: Final = kwargs.get(ATTR_POSITION)
+        if target_position is None:
+            return
+        top_rail_raw = self._fresh_position(ATTR_CURRENT_POSITION)
+        if top_rail_raw is None:
+            return
+        clamped_target = min(round(target_position), top_rail_raw)
+        LOGGER.debug("set bottom-rail cover to position %f", target_position)
+        if self.current_cover_position == clamped_target and not (
+            self.is_closing or self.is_opening
+        ):
+            return
+        self._target_position = clamped_target
+        try:
+            await self._coord.api.set_position(
+                top_rail_raw,
+                pos2=clamped_target,
+                velocity=self._coord.velocity,
+            )
+            self.async_write_ha_state()
+        except BleakError as err:
+            LOGGER.error(
+                "Failed to move bottom-rail cover '%s' to %f%%: %s",
+                self.name,
+                target_position,
+                err,
+            )
+
+    async def async_open_cover(self, **kwargs: Any) -> None:
+        """Open the bottom rail, clamped against the top rail."""
+        LOGGER.debug("open bottom-rail cover")
+        await self.async_set_cover_position(**{ATTR_POSITION: OPEN_POSITION})
+
+    async def async_close_cover(self, **kwargs: Any) -> None:
+        """Close the bottom rail."""
+        LOGGER.debug("close bottom-rail cover")
+        await self.async_set_cover_position(**{ATTR_POSITION: CLOSED_POSITION})
