@@ -458,14 +458,21 @@ class PowerViewCoverTDBUBottom(PowerViewCover):
         return OPEN_POSITION - pos if pos is not None else None
 
     async def async_set_cover_position(self, **kwargs: Any) -> None:
-        """Move the rail, inverting for the device, clamped against the other rail."""
+        """Move the rail, inverting for the device, clamped against the other rail.
+
+        The top rail can't be pulled down past the bottom rail's current
+        position -- that's a LOWER bound on the top rail (target >= bottom),
+        not an upper bound. (Previously coded as min(target, 100-bottom),
+        which is the wrong operator and was the cause of the top rail
+        appearing "locked" once it reached 100-bottom.)
+        """
         target_position: Final = kwargs.get(ATTR_POSITION)
         if target_position is None:
             return
-        top_position = self._fresh_position("position2")
-        if top_position is None:
+        bottom_position = self._fresh_position("position2")
+        if bottom_position is None:
             return
-        clamped = min(round(target_position), OPEN_POSITION - top_position)
+        clamped = max(round(target_position), bottom_position)
         inverted = OPEN_POSITION - clamped
         LOGGER.debug(
             "set top-rail cover to position %f (device %i)", target_position, inverted
@@ -531,11 +538,11 @@ class PowerViewCoverTDBUTop(PowerViewCover):
     async def async_set_cover_position(self, **kwargs: Any) -> None:
         """Move the bottom rail, clamped so it can't pass through the top rail.
 
-        PowerViewCoverTDBUBottom (the "Top rail" entity) inverts position1 to
-        get its own HA-facing position (top_ha = 100 - raw_pos1). The
-        collision constraint is bottom_target <= 100 - top_ha, which
-        substitutes to bottom_target <= raw_pos1 -- so this clamps directly
-        against the raw position1 reading, not against 100 - raw_pos1.
+        The bottom rail can't rise past the top rail's current position --
+        an UPPER bound (target <= top). PowerViewCoverTDBUBottom (the "Top
+        rail" entity) inverts position1 to get its own HA-facing position
+        (top_ha = 100 - raw_pos1), so this clamps against 100 - raw_pos1,
+        not the raw reading directly.
         """
         target_position: Final = kwargs.get(ATTR_POSITION)
         if target_position is None:
@@ -543,7 +550,7 @@ class PowerViewCoverTDBUTop(PowerViewCover):
         top_rail_raw = self._fresh_position(ATTR_CURRENT_POSITION)
         if top_rail_raw is None:
             return
-        clamped_target = min(round(target_position), top_rail_raw)
+        clamped_target = min(round(target_position), OPEN_POSITION - top_rail_raw)
         LOGGER.debug("set bottom-rail cover to position %f", target_position)
         if self.current_cover_position == clamped_target and not (
             self.is_closing or self.is_opening
