@@ -1,0 +1,31 @@
+name: Validate
+
+on:
+  # Nothing reaches main except through a pull request, and the PR run already
+  # checks the merge result, so there is no push trigger: it would only re-run
+  # what was just validated. Use workflow_dispatch to check main on demand.
+  #
+  # No paths filter here, unlike lint and hassfest: HACS checks the README,
+  # hacs.json, the manifest, the brands entry and the repository settings, so
+  # almost any change is in scope.
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate-hacs:
+    runs-on: "ubuntu-latest"
+    name: Validate with HACS Action
+    steps:
+      - name: HACS validation
+        uses: "hacs/action@main"
+        with:
+          category: "integration"
+          # No `ignore: brands` here: the domain is already registered at
+          # home-assistant/brands under custom_integrations. If the brands check
+          # starts failing, fix it rather than skipping it.

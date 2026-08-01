@@ -1,34 +1,46 @@
-name: "Lint the code"
+name: Lint
 
 on:
-  push:
+  # Nothing reaches main except through a pull request, and the PR run already
+  # checks the merge result, so there is no push trigger: it would only re-run
+  # what was just validated. Use workflow_dispatch to check main on demand.
   pull_request:
+    paths:
+      - '**.py'
+      - 'requirements.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/lint.yml'
   workflow_dispatch:
-  schedule:
-    - cron:  '0 5 * * 6'
-    
+
+permissions: {}
+
+# A second push to a PR cancels the run still in flight for the first.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   lint:
-    name: "Lint the code"
+    name: Lint the code
     runs-on: "ubuntu-latest"
     steps:
-        - name: "Checkout the repository"
-          uses: "actions/checkout@main"
+      - name: Checkout the repository
+        uses: "actions/checkout@v4"
 
-        - name: "Set up Python"
-          uses: actions/setup-python@main
-          with:
-            python-version: "3.13.2"
-            cache: "pip"
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13.2"
+          cache: "pip"
 
-        - name: "Install requirements"
-          run: python3 -m pip install -r requirements.txt
+      - name: Install requirements
+        run: python3 -m pip install -r requirements.txt
 
-        - name: "Run ruff"
-          run: ruff check .
+      - name: Run ruff
+        run: ruff check .
 
-        - name: "Run mypy"
-          run: mypy .
+      - name: Run mypy
+        run: mypy .
 
-        - name: "Run codespell"
-          run: codespell -L hass
+      - name: Run codespell
+        run: codespell -L hass

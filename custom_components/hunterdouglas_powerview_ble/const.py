@@ -1,4 +1,4 @@
-"""Constants for the BLE Battery Management System integration."""
+"""Constants for the Hunter Douglas PowerView (BLE) integration."""
 
 import logging
 from typing import Final

@@ -1,0 +1,30 @@
+name: Hassfest
+
+on:
+  # Nothing reaches main except through a pull request, and the PR run already
+  # checks the merge result, so there is no push trigger: it would only re-run
+  # what was just validated. Use workflow_dispatch to check main on demand.
+  pull_request:
+    # hassfest only inspects the integration itself, so documentation and
+    # tooling changes have nothing for it to check.
+    paths:
+      - 'custom_components/**'
+      - '.github/workflows/hassfest.yml'
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  validate:
+    runs-on: "ubuntu-latest"
+    name: Validate with hassfest
+    steps:
+      - name: Checkout repository
+        uses: "actions/checkout@v4"
+
+      - name: Run hassfest
+        uses: "home-assistant/actions/hassfest@master"

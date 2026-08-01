@@ -12,11 +12,11 @@ body:
     options:
       - label: I need support with using the integration.
         required: true
-      - label: I'm not avoiding to fill out the [bug report](https://github.com/patman15/hdpv_ble/issues/new?assignees=&labels=Bug&projects=&template=bug.yml) form.
+      - label: This is not a bug report avoiding the [bug report](https://github.com/safepay/hdpv_ble/issues/new?assignees=&labels=Bug&projects=&template=bug.yml) form.
         required: true
 - type: textarea
   attributes:
     label: "Describe the issue"
-    description: "Please describe your issue, ask your question and give necessary context (BMS you are using)."
+    description: "Please describe your issue, ask your question and give necessary context (shade type ID, whether you use a Bluetooth proxy or a PowerView hub)."
   validations:
     required: true

@@ -1,27 +1,30 @@
-# HD PowerView Support via BLE for Home Assistant
+# Hunter Douglas PowerView BLE for Home Assistant
 
-[![GitHub Release][releases-shield]][releases]
-[![License][license-shield]](LICENSE)
+[![GitHub Release](https://img.shields.io/github/v/release/safepay/hdpv_ble)](https://github.com/safepay/hdpv_ble/releases)
+[![License](https://img.shields.io/github/license/safepay/hdpv_ble)](https://github.com/safepay/hdpv_ble/blob/main/LICENSE)
+[![HACS](https://img.shields.io/badge/HACS-Custom-orange.svg)](https://github.com/hacs/integration)
+[![Home Assistant](https://img.shields.io/badge/Home%20Assistant-2024.8.0+-blue.svg)](https://www.home-assistant.io/)
 
- A Home Assistant integration to support Hunter Douglas Powerview devices via Bluetooth
-
-> [!WARNING]
-> - This integration is under development!
-> - Test coverage is low, malfunction might occur. 
-> - The HOME_KEY is lost over updates!
+A Home Assistant integration that controls Hunter Douglas PowerView shades
+directly over Bluetooth LE, with no cloud account and no vendor app in the loop.
 
 ## Features
-- Zero configuration
+
+- Zero configuration — shades are discovered over Bluetooth
+- Home key entered through the config flow and stored with the config entry
+- Position **and tilt** control, including top-down and tilt-only shades
 - Supports [ESPHome Bluetooth proxy](https://esphome.io/components/bluetooth_proxy)
+- Optional PowerView G3 hub link for data the shades don't report reliably over the air
+- Downloadable diagnostics for every shade
 
 ### Supported Devices
 
-Type* | Description
+Type\* | Description
 -- | --
-1  | Designer Roller
-4  | Roman
-5  | Bottom Up
-6  | Duette
+1 | Designer Roller
+4 | Roman
+5 | Bottom Up
+6 | Duette
 10 | Duette and Applause SkyLift
 19 | Provenance Woven Wood
 31, 32, 84 | Vignette
@@ -33,68 +36,109 @@ Type* | Description
 
 \*) Type can be found in the PowerView app under *product info*, *type ID*
 
-### Provided Information
-The integration provides the following information about the battery
+### Provided Entities
 
-Platform | Description | Unit | Details
--- | -- | -- | --
-`binary_sensor` | battery charging indicator | `bool` | true if battery is charging
-`button` | identify shade | - | identify shade by LED and 3 beeps
-`cover` | view/control position | `%` | percentage cover is open (100% is open)
-`sensor` | SoC (state of charge) | `%` | range 100% (full), 50%, 20%, 0% (battery empty)
+Platform | Entity | Details
+-- | -- | --
+`cover` | Shade | Position and, where the shade supports it, tilt. 100% is open
+`number` | Velocity | Movement speed, 0–100 (configuration entity)
+`button` | Identify | Identifies the shade by LED and 3 beeps
+`sensor` | Battery | State of charge: 100% (full), 50%, 20%, 0% (empty)
+`sensor` | Signal strength | BLE RSSI in dBm
+`binary_sensor` | Charging | On while the battery is charging
+`binary_sensor` | Clock reset required | Flags a shade whose clock needs resetting
+`binary_sensor` | Mode reset required | Flags a shade whose mode needs resetting
+
+Position, tilt and battery report *unknown* rather than a stale value when a
+shade goes out of Bluetooth range.
 
 ## Installation
+
+### Via HACS (recommended)
+
+1. Open HACS in Home Assistant.
+2. Click the three dots in the top right corner and select **Custom repositories**.
+3. Add this repository URL: `https://github.com/safepay/hdpv_ble`
+4. Select **Integration** as the category.
+5. Click **Install**, then restart Home Assistant.
+
+[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=safepay&repository=hdpv_ble&category=Integration)
+
 > [!IMPORTANT]
-> In case you added your shades to the app or a gateway, you need to [set the encryption key](#set-the-encryption-key) manually in the [`const.py`](https://github.com/patman15/hdpv_ble/blob/main/custom_components/hunterdouglas_powerview_ble/const.py) file after **each** update!
-
-### Automatic
-Installation can be done using [HACS](https://hacs.xyz/) by [adding a custom repository](https://hacs.xyz/docs/faq/custom_repositories/).
-
-[![Open your Home Assistant instance and open a repository inside the Home Assistant Community Store.](https://my.home-assistant.io/badges/hacs_repository.svg)](https://my.home-assistant.io/redirect/hacs_repository/?owner=patman15&repository=hdpv_ble&category=Integration)
+> This integration uses the same domain as the upstream project, so the two
+> cannot be installed side by side. Remove `patman15/hdpv_ble` in HACS first.
+> Because the domain matches, your existing shades, entity IDs, history and
+> automations carry over — there is no need to re-add anything.
 
 ### Manual
-1. Using the tool of choice open the directory (folder) for your HA configuration (where you find `configuration.yaml`).
-1. If you do not have a `custom_components` directory (folder) there, you need to create it.
-1. In the `custom_components` directory (folder) create a new folder called `hunterdouglas_powerview_ble`.
-1. Download _all_ the files from the `custom_components/hunterdouglas_powerview_ble/` directory (folder) in this repository.
-1. Place the files you downloaded in the new directory (folder) you created.
-1. Restart Home Assistant
-1. In the HA UI go to "Configuration" -> "Integrations" click "+" and search for "Hunter Douglas PowerView (BLE)"
 
-## Set the Encryption Key
-Currently, there are three methods to obtain the key:
+1. Open the directory for your HA configuration (where `configuration.yaml` lives).
+2. Create a `custom_components` directory there if you don't have one.
+3. Inside it, create a folder called `hunterdouglas_powerview_ble`.
+4. Download *all* the files from `custom_components/hunterdouglas_powerview_ble/`
+   in this repository into that folder.
+5. Restart Home Assistant.
+6. Go to **Settings → Devices & Services → Add Integration** and search for
+   "Hunter Douglas PowerView (BLE)".
 
-1. Via adopting a BLE shade: There is a [shade emulator](/emu/PV_BLE_cover) that works with Arduino IDE and an ESP32 device (&ge; 2MiB flash, &ge; 128KiB required), e.g. [Adafruit QT Py ESP32-S3](https://www.adafruit.com/product/5426). Install and connect via serial port, then go to the PowerView app and add the shade `myPVcover` to your home. You will see a log message `set shade key: \xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx\xx` . Copy this key. You can delete the shade from the app when done.
-2. Extracting from gateway: This [script](scripts/extract_gateway3_homekey.py) is able to extract the key from a working PowerView gateway.
-3. Grabbing from the app: Checkout this [post in the Home Assistant community forum](https://community.home-assistant.io/t/hunter-douglas-powerview-gen-3-integration/424836/228).
+## Configuration
 
-Finally, you need to manually copy the key to [`const.py`](https://github.com/patman15/hdpv_ble/blob/main/custom_components/hunterdouglas_powerview_ble/const.py).
+Shades are discovered automatically. When one is found, Home Assistant asks for:
 
-> [!IMPORTANT]
-> You need to update the file after **each** update!
+- **HomeKey** — 32 hex characters (e.g. `0102030405060708090a0b0c0d0e0f10`) or
+  the `\xNN` escaped form. Required. See [Obtaining the home key](#obtaining-the-home-key).
+- **PowerView hub URL** — optional, e.g. `http://192.168.1.50`. When set, the
+  integration reads battery-powered status and friendly names from a G3 hub over
+  HTTP, because the shades do not report those reliably over Bluetooth.
+
+Both are stored with the config entry and persist across updates. To change
+them later, use **Configure** on the integration.
+
+### Obtaining the home key
+
+Every shade in a home shares one key. There are three ways to get it:
+
+1. **Adopt a shade emulator.** The [shade emulator](/emu/PV_BLE_cover) works with
+   the Arduino IDE and an ESP32 (≥ 2 MiB flash, ≥ 128 KiB RAM), e.g. an
+   [Adafruit QT Py ESP32-S3](https://www.adafruit.com/product/5426). Flash it,
+   connect over serial, then add the shade `myPVcover` to your home in the
+   PowerView app. You will see `set shade key: \xx\xx...` in the log. Copy that
+   key, then delete the emulated shade from the app.
+2. **Extract it from a gateway.** [This script](scripts/extract_gateway3_homekey.py)
+   pulls the key from a working PowerView gateway.
+3. **Grab it from the app.** See [this post](https://community.home-assistant.io/t/hunter-douglas-powerview-gen-3-integration/424836/228)
+   in the Home Assistant community forum.
 
 ## Known Issues
+
 <details><summary>Shade inoperable after charging</summary>
-It seems that the shades require some re-initialization after charging. The solution is currently unknown, but as a workaround you can operate the shade ones using the vendor app.
+Shades appear to need some re-initialisation after charging. The cause is
+currently unknown; as a workaround, operate the shade once using the vendor app.
 </details>
 
 ## Troubleshooting
-In case you have severe troubles,
 
-- please enable the debug protocol for the integration,
-- reproduce the issue,
-- disable the log (Home Assistant will prompt you to download the log), and finally
-- [open an issue](https://github.com/patman15/hdpv_ble/issues/new?assignees=&labels=Bug&projects=&template=bug.yml) with a good description of what happened and attach the log.
+If you hit something serious:
 
-# Thanks To
-[@mannkind](https://github.com/mannkind)
-
-[license-shield]: https://img.shields.io/github/license/patman15/hdpv_ble.svg?style=for-the-badge
-[releases-shield]: https://img.shields.io/github/release/patman15/hdpv_ble.svg?style=for-the-badge
-[releases]: https://github.com//patman15/hdpv_ble/releases
+1. Enable debug logging for the integration.
+2. Reproduce the issue.
+3. Disable the log — Home Assistant will prompt you to download it.
+4. Download diagnostics for the affected shade from its device page
+   (**⋮ → Download diagnostics**).
+5. [Open an issue](https://github.com/safepay/hdpv_ble/issues/new?assignees=&labels=Bug&projects=&template=bug.yml)
+   with a good description of what happened, and attach both files.
 
 ## Outlook
-- Add tests!
-- Allow parallel usage to PowerView app as "remote"
-- Add support for tilt function
-- Add support for further device types
+
+- Add tests
+- Allow parallel usage with the PowerView app as a "remote"
+- Support further device types
+
+## Credits
+
+Originally written by [@patman15](https://github.com/patman15), with thanks to
+[@mannkind](https://github.com/mannkind). This fork has been substantially
+modified from the original — most notably the config-flow home key, hub support,
+tilt handling and diagnostics.
+
+Licensed under the Apache License 2.0; see [LICENSE](LICENSE).

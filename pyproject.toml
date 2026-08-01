@@ -10,8 +10,8 @@ readme      = "README.md"
 requires-python = ">=3.13.2"
 
 [project.urls]
-"Source Code" = "https://github.com/patman15/hdpv_ble/"
-"Bug Reports" = "https://github.com/patman15/hdpv_ble/issues"
+"Source Code" = "https://github.com/safepay/hdpv_ble/"
+"Bug Reports" = "https://github.com/safepay/hdpv_ble/issues"
 
 [tool.pytest.ini_options]
 minversion = "8.0"
