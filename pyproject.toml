@@ -13,17 +13,6 @@ requires-python = ">=3.13.2"
 "Source Code" = "https://github.com/safepay/hdpv_ble/"
 "Bug Reports" = "https://github.com/safepay/hdpv_ble/issues"
 
-[tool.pytest.ini_options]
-minversion = "8.0"
-addopts="--cov=custom_components.hunterdouglas_powerview_ble --cov-report=term-missing --cov-fail-under=100"
-pythonpath = [
-    "custom_components.hunterdouglas_powerview_ble",
-]
-testpaths = [
-    "tests",
-]
-asyncio_mode = "auto"
-
 # ruff settings from HA 2025.2.2
 [tool.ruff]
 required-version = ">=0.9.1"
