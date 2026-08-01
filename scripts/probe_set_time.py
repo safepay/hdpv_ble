@@ -389,16 +389,29 @@ async def _set_dow(api: PowerViewClient, dow: int) -> int:
     the weekday byte reads afterwards is the vendor's code for that day.
     """
     now = datetime.now().replace(microsecond=0)
+    iso = now.isoweekday()
+    sun1 = iso % 7 + 1  # the same day under a Sunday=1..Saturday=7 scheme
+    if dow in (iso, sun1):
+        # Reading this value back later could mean either "the vendor wrote
+        # it" or "the vendor never wrote and our own value survived", which
+        # is exactly the ambiguity the parked value exists to avoid.
+        print(
+            f"{dow} is what a candidate scheme already calls {now:%A} "
+            f"(isoweekday {iso}, Sunday=1 {sun1}).\n"
+            f"Reading it back unchanged would be ambiguous — park a value "
+            f"that is neither."
+        )
+        return 1
+
     code, note = _describe(await api.query(CMD_SET_TIME, _core(now) + bytes([dow])))
     shown = f"0x{code:02X} {note}" if code is not None else note
     print(f"Wrote {now:%Y-%m-%d %H:%M:%S} with weekday {dow}: {shown}")
     if code:
         return 1
     print(
-        f"\n  Today is a {now:%A}. isoweekday would be {now.isoweekday()}; "
-        f"a Sunday=1 scheme\n"
-        f"  would be {now.isoweekday() % 7 + 1}. Parked {dow}, which is "
-        f"neither.\n\n"
+        f"\n  Today is a {now:%A}: isoweekday {iso}, Sunday=1 scheme {sun1}. "
+        f"Parked {dow},\n"
+        f"  which is neither, so any change is the vendor's doing.\n\n"
         f"  Now operate this shade from the PowerView app, or wait for the "
         f"G3 gateway's\n"
         f"  daily clock sync, then re-run with --read-time. If the weekday "
