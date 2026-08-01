@@ -545,12 +545,19 @@ class PowerViewCoverDuoliteCombined(PowerViewCoverDuoliteBase):
 
     @callback
     def _get_shade_move(self, target: int) -> ShadeMove | None:
-        """Drive whichever fabric owns this half of the scale."""
+        """Drive whichever fabric owns this half of the scale.
+
+        The fabrics interlock: the front sheer has to be retracted before the
+        rear opaque can move, and the rear has to be fully open before the
+        front can. The hub API leaves the idle axis unset and lets the hub
+        apply that itself, but every position command here carries both axes,
+        so the idle one is stated at the position the interlock requires.
+        Restating it at its current position instead would pin the fabric and
+        leave the combined scale stuck in one half.
+        """
         if target > DUOLITE_MIDPOINT:
-            return ShadeMove(pos1=(target - DUOLITE_MIDPOINT) * 2)
-        # Only the rear moves, but the lift axis still has to be restated.
-        front = self._front_position
-        return None if front is None else ShadeMove(pos1=front, pos2=target * 2)
+            return ShadeMove(pos1=(target - DUOLITE_MIDPOINT) * 2, pos2=OPEN_POSITION)
+        return ShadeMove(pos1=CLOSED_POSITION, pos2=target * 2)
 
 
 class PowerViewCoverDuoliteCombinedTilt(

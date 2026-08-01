@@ -95,7 +95,7 @@ class ShadeCapability(NamedTuple):
     has_tilt: bool = False
     tilt_only: bool = False
     is_tilt_on_closed: bool = False  # tilt only available when fully closed
-    is_top_down: bool = False  # position logic is inverted (SkyLift style)
+    is_top_down: bool = False  # position logic is inverted (type 7 only)
     is_tdbu: bool = False  # dual-rail Top Down Bottom Up (needs two entities)
     is_duolite: bool = False  # dual-fabric sheer+opaque (needs three entities)
 
@@ -126,7 +126,9 @@ SHADE_CAPABILITIES: Final[dict[int, ShadeCapability]] = {
     # on the strength of its name, but aiopvapi registers it as a plain
     # bottom-up shade, so it now falls through to the default.
     7: ShadeCapability(is_top_down=True),
-    # dual-rail top-down/bottom-up (two independent rails → two entities)
+    # dual-rail top-down/bottom-up (two independent rails → two entities).
+    # Type 9 is named DuoLite but aiopvapi registers it as plain TDBU, and the
+    # two-rail path is the one confirmed on hardware -- so no is_duolite here.
     8: ShadeCapability(is_tdbu=True),
     9: ShadeCapability(is_tdbu=True),
     33: ShadeCapability(is_tdbu=True),
@@ -152,8 +154,9 @@ def get_shade_capabilities(type_id: int | None) -> ShadeCapability:
 OPEN_POSITION: Final[int] = 100
 CLOSED_POSITION: Final[int] = 0
 
-# Wire sentinel meaning "leave this axis where it is". Sent verbatim, without
-# the fixed-point scaling the real position fields get.
+# Wire sentinel meaning "leave this axis where it is". Sent verbatim -- for
+# pos1/pos2 that means skipping the *100 fixed-point scaling a real lift
+# position would get; pos3 and tilt are unscaled either way.
 KEEP_POSITION: Final[int] = 0x8000
 
 
