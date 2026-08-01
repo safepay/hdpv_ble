@@ -113,6 +113,7 @@ Platform | Entity | Notes
 -- | -- | --
 `cover` | Shade | Position, and tilt where supported. 100% is open
 `cover` | Top rail / Bottom rail | Top-down/bottom-up shades only — one entity per rail
+`cover` | Combined / Front / Rear | Dual-fabric shades only — see [Dual-fabric shades](#dual-fabric-shades)
 `number` | Velocity | Movement speed, 0–100. Configuration entity
 `button` | Identify | Flashes the LED and beeps three times
 `sensor` | Battery | 100% (full), 50%, 20%, 0% (empty)
@@ -127,21 +128,42 @@ The type ID is shown in the PowerView app under *product info → type ID*.
 
 Behaviour | Type IDs
 -- | --
-Position only | 1, 4, 5, 6, 19, 26, 27, 28, 31, 32, 38, 42, 49, 52, 53, 57, 65, 69, 70, 71, 79, 84, 95
+Position only | 1, 4, 5, 6, 10, 19, 26, 27, 28, 31, 32, 42, 49, 52, 53, 57, 69, 70, 71, 84
 Position and tilt | 51, 54, 55, 56, 62, 103
 Tilt only | 39, 40, 66
 Tilt when fully closed | 18, 23, 43, 44, 72
-Top-down, single rail | 7, 10
+Top-down, single rail | 7
 Top-down/bottom-up, dual rail | 8, 9, 33, 47
+Dual fabric, front sheer and rear opaque | 38, 65, 79, 95
 
-Shades with two overlapping fabrics (9, 38, 65, 79, 95) are driven as a single
-fabric — the second sheer or blackout layer is not exposed yet. On those types
-the tilt of type 38 and the backlight of type 95 are also unavailable.
+Which behaviour each type gets follows [`aiopvapi`](https://github.com/sander76/aio-powerview-api),
+the library behind Home Assistant's official hub-based PowerView integration, so
+a shade behaves the same here as it does over the hub.
 
 If your shade isn't listed, open an issue with its type ID and a diagnostics
 download. [`scripts/shade_report.py`](scripts/shade_report.py) dumps the same raw
 bytes without your shade's name or serial number, if you have a G3 hub for it to
 read the home key from.
+
+### Dual-fabric shades
+
+> [!NOTE]
+> **Experimental.** These entities were written from the hub API's model of
+> these shades rather than from a Duolite shade on the bench. If yours moves the
+> wrong fabric, moves the wrong way, or doesn't move at all, please open an issue
+> with a diagnostics download — that is enough to correct the mapping.
+
+Types 38, 65, 79 and 95 hang a sheer fabric and an opaque fabric on one motor.
+They get three cover entities:
+
+Entity | Controls
+-- | --
+Combined | Both fabrics on one 0–100 scale: 0–50 moves the rear opaque fabric, 51–100 moves the front sheer. Use this one unless you need the fabrics apart
+Front | The front sheer fabric alone
+Rear | The rear opaque fabric alone
+
+Type 38 (Silhouette Duolite) also tilts, on its combined entity. The backlight of
+type 95 (Aura Illuminated) is still not exposed.
 
 ## How it works
 

@@ -31,12 +31,17 @@ UUID_DEV_SERVICE: Final[str] = normalize_uuid_str("180a")
 ATTR_ACTIVITY: Final[str] = "activity"
 
 
+# Type IDs and their product names follow aiopvapi's `resources/shade.py`, the
+# library behind Home Assistant's official (hub-based) hunterdouglas_powerview
+# integration. Types 39 and 103 are additions from openHAB's database that
+# aiopvapi does not carry.
 SHADE_TYPE: Final[dict[int, str]] = {
     # up down only
     1: "Designer Roller",
     4: "Roman",
     5: "Bottom Up",
     6: "Duette",
+    10: "Duette and Applause SkyLift",
     19: "Provenance Woven Wood",
     26: "Skyline Panel, Left Stack",
     27: "Skyline Panel, Right Stack",
@@ -54,7 +59,6 @@ SHADE_TYPE: Final[dict[int, str]] = {
     84: "Vignette",
     # top down (single rail, inverted position)
     7: "Top Down",
-    10: "Duette and Applause SkyLift",
     # top down bottom up (dual rail)
     8: "Duette, Top Down Bottom Up",
     9: "Duette DuoLite, Top Down Bottom Up",
@@ -65,7 +69,7 @@ SHADE_TYPE: Final[dict[int, str]] = {
     40: "Everwood Alternative Wood Blinds",
     66: "Palm Beach Shutters",
     # tilt on closed
-    18: "Bottom Up, Tilt on Closed 90°",
+    18: "Pirouette",
     23: "Silhouette",
     43: "Facette",
     44: "Twist",
@@ -78,10 +82,10 @@ SHADE_TYPE: Final[dict[int, str]] = {
     62: "Venetian, Tilt Anywhere",
     103: "Designer Banded, Tilt Anywhere",
     # duolite (dual overlapping fabrics)
-    38: "Dual Overlapped, Tilt 90°",
-    65: "Dual Overlapped",
+    38: "Silhouette Duolite",
+    65: "Vignette Duolite",
     79: "Duolite Lift",
-    95: "Dual Overlapped Illuminated",
+    95: "Aura Illuminated, Roller",
 }
 
 
@@ -91,11 +95,14 @@ class ShadeCapability(NamedTuple):
     has_tilt: bool = False
     tilt_only: bool = False
     is_tilt_on_closed: bool = False  # tilt only available when fully closed
-    is_top_down: bool = False  # position logic is inverted (SkyLift style)
+    is_top_down: bool = False  # position logic is inverted (type 7 only)
     is_tdbu: bool = False  # dual-rail Top Down Bottom Up (needs two entities)
     is_duolite: bool = False  # dual-fabric sheer+opaque (needs three entities)
 
 
+# Capabilities mirror the aiopvapi class each type is registered under, so a
+# type behaves the same here as it does over the hub API. Types absent from
+# this table fall back to plain up/down, which is aiopvapi's capability 0.
 SHADE_CAPABILITIES: Final[dict[int, ShadeCapability]] = {
     # tilt anywhere (position + tilt)
     51: ShadeCapability(has_tilt=True),
@@ -114,16 +121,21 @@ SHADE_CAPABILITIES: Final[dict[int, ShadeCapability]] = {
     43: ShadeCapability(has_tilt=True, is_tilt_on_closed=True),
     44: ShadeCapability(has_tilt=True, is_tilt_on_closed=True),
     72: ShadeCapability(has_tilt=True, is_tilt_on_closed=True),
-    # top-down only (single rail, inverted position)
+    # top-down only (single rail, inverted position). Type 7 is the only
+    # inverted single-rail type; type 10 (SkyLift) was previously listed here
+    # on the strength of its name, but aiopvapi registers it as a plain
+    # bottom-up shade, so it now falls through to the default.
     7: ShadeCapability(is_top_down=True),
-    10: ShadeCapability(is_top_down=True),
-    # dual-rail top-down/bottom-up (two independent rails → two entities)
+    # dual-rail top-down/bottom-up (two independent rails → two entities).
+    # Type 9 is named DuoLite but aiopvapi registers it as plain TDBU, and the
+    # two-rail path is the one confirmed on hardware -- so no is_duolite here.
     8: ShadeCapability(is_tdbu=True),
+    9: ShadeCapability(is_tdbu=True),
     33: ShadeCapability(is_tdbu=True),
     47: ShadeCapability(is_tdbu=True),
-    # duolite (dual overlapping fabrics → three entities)
-    9: ShadeCapability(is_tdbu=True, is_duolite=True),
-    38: ShadeCapability(is_duolite=True),
+    # duolite (dual overlapping fabrics → three entities). Type 38 also tilts;
+    # aiopvapi registers it under a tilting class, unlike the others.
+    38: ShadeCapability(has_tilt=True, is_duolite=True),
     65: ShadeCapability(is_duolite=True),
     79: ShadeCapability(is_duolite=True),
     95: ShadeCapability(is_duolite=True),
@@ -141,6 +153,27 @@ def get_shade_capabilities(type_id: int | None) -> ShadeCapability:
 
 OPEN_POSITION: Final[int] = 100
 CLOSED_POSITION: Final[int] = 0
+
+# Wire sentinel meaning "leave this axis where it is". Sent verbatim -- for
+# pos1/pos2 that means skipping the *100 fixed-point scaling a real lift
+# position would get; pos3 and tilt are unscaled either way.
+KEEP_POSITION: Final[int] = 0x8000
+
+
+class ShadeMove(NamedTuple):
+    """A movement request in device coordinates.
+
+    Cover entities translate their Home Assistant facing target into one of
+    these, so the axis inversion and rail interlocks of each shade type stay
+    in that type's subclass rather than leaking into the transport. Fields are
+    in the wire order of ``PowerViewBLE.set_position``.
+    """
+
+    pos1: int
+    pos2: int = KEEP_POSITION
+    pos3: int = KEEP_POSITION
+    tilt: int = KEEP_POSITION
+
 
 POWER_LEVELS: Final[dict[int, int]] = {
     3: 100,  # 3 = 100% to 51% power remaining (also reported by hardwired)
@@ -324,9 +357,9 @@ class PowerViewBLE:
     async def set_position(
         self,
         pos1: int,
-        pos2: int = 0x8000,
-        pos3: int = 0x8000,
-        tilt: int = 0x8000,
+        pos2: int = KEEP_POSITION,
+        pos3: int = KEEP_POSITION,
+        tilt: int = KEEP_POSITION,
         velocity: int = 0x0,
         disconnect: bool = True,
     ) -> None:
@@ -342,9 +375,9 @@ class PowerViewBLE:
         )
         # pos2 is another lift-rail position, like pos1 -- not a rotation like
         # tilt -- so it gets the same *100 fixed-point wire encoding as pos1.
-        # 0x8000 is the device's "leave unchanged" sentinel and must pass
-        # through unmultiplied.
-        pos2_wire = pos2 if pos2 == 0x8000 else pos2 * 100
+        # KEEP_POSITION is the device's "leave unchanged" sentinel and must
+        # pass through unmultiplied.
+        pos2_wire = pos2 if pos2 == KEEP_POSITION else pos2 * 100
         await self._cmd(
             (
                 ShadeCmd.SET_POSITION,
@@ -357,20 +390,10 @@ class PowerViewBLE:
             disconnect,
         )
 
-    async def open(self, velocity: int = 0x0) -> None:
-        """Fully open cover."""
-        LOGGER.debug("%s open", self.name)
-        await self.set_position(OPEN_POSITION, velocity=velocity, disconnect=False)
-
     async def stop(self) -> None:
         """Stop device movement."""
         LOGGER.debug("%s stop", self.name)
         await self._cmd((ShadeCmd.STOP, b""))
-
-    async def close(self, velocity: int = 0x0) -> None:
-        """Fully close cover."""
-        LOGGER.debug("%s close", self.name)
-        await self.set_position(CLOSED_POSITION, velocity=velocity, disconnect=False)
 
     # uint8_t scene#, uint8_t unknown
     # open: scene 2
