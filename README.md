@@ -202,8 +202,9 @@ stop running. It reports this as the `Clock reset required` diagnostic sensor.
 The shade still takes movement commands normally; only its own timed behaviour
 is affected.
 
-The integration sets the shade's clock each time it connects, so operating the
-shade from Home Assistant clears it.
+Operating the shade once from the vendor app clears it. Doing the same directly
+from Home Assistant is not yet possible — see
+[#5](https://github.com/safepay/hdpv_ble/issues/5).
 </details>
 
 ## Credits

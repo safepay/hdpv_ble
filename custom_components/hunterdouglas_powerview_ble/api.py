@@ -532,24 +532,31 @@ class PowerViewBLE:
             LOGGER.debug("%s: clock update failed: %s", self.name, ex)
             return
         # Validated inline rather than via _verify_ack_reply, which logs at
-        # error level -- a shade that does not know this opcode must not fill
-        # the log on every connect. Watch the `reset_clock` flag in the next
-        # advertisement to see whether the shade accepted it.
+        # error level -- a shade that rejects this must not fill the log on
+        # every connect.
         ack: Final[bytes] = int.to_bytes(
             ShadeCmd.SET_TIME.value & 0xFFEF, 2, byteorder="little"
         )
-        accepted: Final[bool] = (
-            len(self._data) > 4
-            and self._data[0:2] == ack
-            and self._data[2] == seq
-            and self._data[4] == 0
-        )
-        LOGGER.debug(
-            "%s: clock set to %s, shade %s",
-            self.name,
-            now.isoformat(),
-            "accepted" if accepted else "did not acknowledge",
-        )
+        if not (
+            len(self._data) > 4 and self._data[0:2] == ack and self._data[2] == seq
+        ):
+            LOGGER.debug(
+                "%s: unrecognised reply to clock update: %s",
+                self.name,
+                self._data.hex(" "),
+            )
+            return
+        status: Final[int] = self._data[4]
+        if status:
+            # Known: 0x04 is "invalid length" (PV_ERROR_CODES in
+            # scripts/shade_report.py). A framed reply with a non-zero status
+            # means the opcode is right but this firmware wants a payload
+            # shaped differently to the emulator's documented 7 bytes.
+            LOGGER.debug(
+                "%s: shade rejected the clock update, status 0x%02X", self.name, status
+            )
+            return
+        LOGGER.debug("%s: clock set to %s", self.name, now.isoformat())
 
     async def _connect(self) -> None:
         """Connect to the device and setup notification if not connected."""
