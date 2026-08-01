@@ -1,14 +1,21 @@
 name: Validate
 
 on:
-  # Branch pushes are covered by the pull_request trigger, so push is limited to
-  # main to stop every commit on an open PR running this twice.
-  push:
-    branches: [main]
+  # Nothing reaches main except through a pull request, and the PR run already
+  # checks the merge result, so there is no push trigger: it would only re-run
+  # what was just validated. Use workflow_dispatch to check main on demand.
+  #
+  # No paths filter here, unlike lint and hassfest: HACS checks the README,
+  # hacs.json, the manifest, the brands entry and the repository settings, so
+  # almost any change is in scope.
   pull_request:
   workflow_dispatch:
 
 permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate-hacs:

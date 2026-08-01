@@ -1,14 +1,23 @@
 name: Lint
 
 on:
-  # Branch pushes are covered by the pull_request trigger, so push is limited to
-  # main to stop every commit on an open PR running this twice.
-  push:
-    branches: [main]
+  # Nothing reaches main except through a pull request, and the PR run already
+  # checks the merge result, so there is no push trigger: it would only re-run
+  # what was just validated. Use workflow_dispatch to check main on demand.
   pull_request:
+    paths:
+      - '**.py'
+      - 'requirements.txt'
+      - 'pyproject.toml'
+      - '.github/workflows/lint.yml'
   workflow_dispatch:
 
 permissions: {}
+
+# A second push to a PR cancels the run still in flight for the first.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   lint:

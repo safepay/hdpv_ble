@@ -1,14 +1,22 @@
 name: Hassfest
 
 on:
-  # Branch pushes are covered by the pull_request trigger, so push is limited to
-  # main to stop every commit on an open PR running this twice.
-  push:
-    branches: [main]
+  # Nothing reaches main except through a pull request, and the PR run already
+  # checks the merge result, so there is no push trigger: it would only re-run
+  # what was just validated. Use workflow_dispatch to check main on demand.
   pull_request:
+    # hassfest only inspects the integration itself, so documentation and
+    # tooling changes have nothing for it to check.
+    paths:
+      - 'custom_components/**'
+      - '.github/workflows/hassfest.yml'
   workflow_dispatch:
 
 permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   validate:

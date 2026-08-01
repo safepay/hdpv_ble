@@ -6,7 +6,10 @@ to be bumped, tagged or written by hand.
 ## Cutting a release
 
 1. Make sure everything you want to ship is merged into `main` and that **Lint**,
-   **Hassfest** and **Validate** are green.
+   **Hassfest** and **Validate** were green on the pull requests that landed it.
+   Those workflows do not run on pushes to `main` — if you want to confirm the
+   branch itself before releasing, run each from **Actions → Run workflow**
+   against `main`.
 2. Go to **Actions → Release → Run workflow**.
 3. Choose the bump:
    - **patch** — bug fixes (`0.24.0` → `0.24.1`)
