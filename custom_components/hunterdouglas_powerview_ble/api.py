@@ -526,10 +526,18 @@ class PowerViewBLE:
         # 8 bytes: year LE uint16, month, day, hour, minute, second, weekday.
         # The emulator documents only the first seven and never validates the
         # length, so the missing field went unnoticed there; fw_rev=22 rejects
-        # every other length with status 0x04. Monday=0, matching weekday();
-        # a weekday byte the shade will not take comes back as 0x80.
+        # every other length with status 0x04.
+        #
+        # The weekday is 1-based. Sweeping it 0-15 on a fixed date got 1-7
+        # accepted and everything else refused with 0x80, so the shade
+        # bounds-checks the byte and never cross-checks it against the date.
+        # That rules out weekday(), which is 0 on Mondays and would be
+        # refused every Monday. isoweekday() is Monday=1..Sunday=7; whether
+        # the firmware reads it that way or as Sunday=1..Saturday=7 is not
+        # established, and cannot be while it accepts the whole range. Both
+        # set the clock, which is what clears `reset_clock`. See issue #5.
         payload: Final[bytes] = int.to_bytes(now.year, 2, byteorder="little") + bytes(
-            [now.month, now.day, now.hour, now.minute, now.second, now.weekday()]
+            [now.month, now.day, now.hour, now.minute, now.second, now.isoweekday()]
         )
         try:
             seq = await self._transact((ShadeCmd.SET_TIME, payload))

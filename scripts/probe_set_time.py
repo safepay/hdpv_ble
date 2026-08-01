@@ -16,15 +16,20 @@ Against a hardwired Duette on fw_rev=22 it found:
 So the payload is 8 bytes: the emulator's 7 plus a trailing day-of-week,
 and the firmware validates length before content.
 
-Phase 2 (--dow-sweep) pins down what that trailing byte means, which
-phase 1 cannot: the run above was on a Sunday, where Python's weekday()
-returns 6, and two readings both fit.  Either the field is Mon=0..Sun=6
-and the shade cross-checks it against the date (so only one value is ever
-valid for a given day), or it is a 1..7 range checked only for bounds (so
-6 was accepted merely for being in range, and would have stored the wrong
-weekday).  Sweeping the byte across 0..15 on a known date separates them:
-exactly one acceptance means a cross-check, a contiguous run means a
-bounds check.
+Phase 2 (--dow-sweep) holds the date fixed and sweeps that trailing byte
+across 0..15.  Result on the same shade: 1..7 accepted, 0 and 8..15
+refused with 0x80.  So the firmware bounds-checks the byte and never
+validates it against the date -- a wrong-but-in-range value is stored
+silently.  It also rules out Python's weekday(), which returns 0 on
+Mondays and would be refused outright; the field is 1-based.
+
+Which code means which day therefore cannot be answered by sweeping,
+because every day of the week accepts the whole range.  Phase 3
+(--read-time) tries 0xFF67, "get shade time" -- an opcode the emulator
+carries only as a commented-out case, so whether anything answers it is
+the first question.  If the shade returns a weekday it derived from the
+date rather than the one last written, that settles the mapping;
+otherwise it takes a btsnoop capture of the vendor app.
 
 UNLIKE shade_report.py, THIS SCRIPT WRITES.  It sends exactly one opcode,
 0xFF77, and nothing else -- no move, no scene, no rekey, no power-type
@@ -63,6 +68,10 @@ from scripts.shade_report import (
 # packs big-endian, so this constant is used as-is (the integration's enum
 # stores the byte-swapped 0x77FF and packs little-endian to the same wire).
 CMD_SET_TIME = 0xFF77
+
+# Present in the emulator only as a commented-out case, so the number is
+# known but nothing has ever answered it. --read-time finds out.
+CMD_GET_TIME = 0xFF67
 
 # Reply status byte; see PV_ERROR_CODES in shade_report.py.  0x80 appears
 # only at the correct length with a refused field value, so the firmware
@@ -200,18 +209,81 @@ def _interpret_dow(now: datetime, accepted: list[tuple[int, str, bytes]]) -> Non
             f"  That matches {scheme}."
         )
         return
+    lo, hi = min(codes), max(codes)
     print(
         f"{len(codes)} codes accepted ({', '.join(str(c) for c in codes)}), so "
-        f"the shade only bounds-checks this byte.\n"
-        f"  It does NOT verify the weekday against the date, which means a "
-        f"wrong-but-in-range\n"
-        f"  value is stored silently. The correct code for {weekday} cannot be "
-        f"read off this run\n"
-        f"  alone -- re-run on a different weekday, or capture the vendor app."
+        f"the shade only bounds-checks\n"
+        f"  this byte against {lo}..{hi}. It never verifies the weekday "
+        f"against the date, so a\n"
+        f"  wrong-but-in-range value is stored silently.\n\n"
+        f"  Send {lo}..{hi} only -- anything outside is refused, whatever the "
+        f"real date is.\n"
+        f"  Which code means {weekday} is NOT determinable by re-running: a "
+        f"bounds check\n"
+        f"  accepts the whole range on every day of the week. Settle it with "
+        f"--read-time\n"
+        f"  (does the shade recompute the weekday?) or a btsnoop capture of "
+        f"the vendor app."
     )
 
 
-async def _probe(ble_name: str, hub: str, scan_timeout: float, dow_sweep: bool) -> int:
+def _decode_time(body: bytes) -> None:
+    """Print an 8-byte set-time body, and what its date implies."""
+    year = int.from_bytes(body[0:2], "little")
+    month, day, hour, minute, second, dow = body[2:8]
+    print(
+        f"  decoded: {year:04d}-{month:02d}-{day:02d} "
+        f"{hour:02d}:{minute:02d}:{second:02d}, weekday byte {dow}"
+    )
+    try:
+        real = datetime(year, month, day)
+    except ValueError as ex:
+        print(f"  that date is not valid ({ex}), so the fields are misread.")
+        return
+    print(
+        f"  {real:%Y-%m-%d} is a {real:%A} — isoweekday {real.isoweekday()}, "
+        f"weekday {real.weekday()}."
+    )
+    print(
+        f"  If {dow} differs from the byte last written, the shade derives "
+        f"the weekday itself\n"
+        f"  and {dow} is this firmware's code for {real:%A}. If it matches, "
+        f"the shade only stores\n"
+        f"  what it is given and the mapping needs a vendor-app capture."
+    )
+
+
+async def _read_time(api: PowerViewClient) -> int:
+    """Try 0xFF67, "get shade time", and decode whatever comes back.
+
+    The emulator has this opcode commented out and never implemented, so
+    whether real firmware answers at all is itself the first question.
+    """
+    try:
+        reply = await api.query(CMD_GET_TIME, b"")
+    except (TimeoutError, ValueError) as ex:
+        print(f"0xFF67 did not answer: {ex}")
+        return 1
+
+    print(f"0xFF67 replied with {len(reply)} byte(s): {reply.hex(' ')}")
+    if len(reply) == 1:
+        code, note = _describe(reply)
+        shown = f"0x{code:02X} {note}" if code is not None else note
+        print(f"  status only ({shown}) — this firmware has no get-time.")
+        return 1
+    # Read replies in this protocol lead with a status byte, as 0xFFDE does.
+    if reply[0]:
+        print(f"  leading status 0x{reply[0]:02X} — rejected.")
+        return 1
+    body = reply[1:]
+    if len(body) < 8:
+        print(f"  {len(body)} payload bytes, too few for the set-time layout.")
+        return 0
+    _decode_time(body)
+    return 0
+
+
+async def _probe(ble_name: str, hub: str, scan_timeout: float, mode: str) -> int:
     home_key = _fetch_home_key(hub)
     if home_key is None:
         return 1
@@ -223,6 +295,11 @@ async def _probe(ble_name: str, hub: str, scan_timeout: float, dow_sweep: bool) 
         print(f"  {ble_name} not seen on air. Aborting.")
         return 1
 
+    if mode == "read":
+        async with PowerViewClient(dev, home_key) as api:
+            return await _read_time(api)
+
+    dow_sweep = mode == "dow"
     build = _dow_candidates if dow_sweep else _candidates
     now = datetime.now().replace(microsecond=0)
     candidates = build(now)
@@ -256,8 +333,15 @@ async def _probe(ble_name: str, hub: str, scan_timeout: float, dow_sweep: bool) 
         # which is now a little stale. Regenerate the same candidate from a
         # fresh timestamp -- by index, so no assumption is made about where
         # that candidate puts its fields -- and send it once more.
-        idx, label, _ = accepted[0]
         final = datetime.now().replace(microsecond=0)
+        if dow_sweep and any(i == final.isoweekday() for i, _, _ in accepted):
+            # Index equals the weekday code here, and accepted[0] would be
+            # the lowest accepted code -- right only if the firmware counts
+            # Monday=1. isoweekday() is at least a defensible guess.
+            idx = final.isoweekday()
+            label = f"dow {idx} (isoweekday)"
+        else:
+            idx, label, _ = accepted[0]
         payload = build(final)[idx][1]
         code, note = _describe(await api.query(CMD_SET_TIME, payload))
         stamp = f"{final:%Y-%m-%d %H:%M:%S}"
@@ -283,7 +367,8 @@ def main() -> int:
         default=SCAN_TIMEOUT,
         help=f"BLE scan timeout in seconds (default: {SCAN_TIMEOUT})",
     )
-    parser.add_argument(
+    mode = parser.add_mutually_exclusive_group()
+    mode.add_argument(
         "--dow-sweep",
         action="store_true",
         help=(
@@ -291,10 +376,19 @@ def main() -> int:
             "day-of-week byte across 0-15"
         ),
     )
-    args = parser.parse_args()
-    return asyncio.run(
-        _probe(args.ble_name, args.hub, args.scan_timeout, args.dow_sweep)
+    mode.add_argument(
+        "--read-time",
+        action="store_true",
+        help="Phase 3: read the clock back with 0xFF67 and decode it",
     )
+    args = parser.parse_args()
+    if args.read_time:
+        chosen = "read"
+    elif args.dow_sweep:
+        chosen = "dow"
+    else:
+        chosen = "sweep"
+    return asyncio.run(_probe(args.ble_name, args.hub, args.scan_timeout, chosen))
 
 
 if __name__ == "__main__":
