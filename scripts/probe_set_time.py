@@ -24,12 +24,20 @@ silently.  It also rules out Python's weekday(), which returns 0 on
 Mondays and would be refused outright; the field is 1-based.
 
 Which code means which day therefore cannot be answered by sweeping,
-because every day of the week accepts the whole range.  Phase 3
-(--read-time) tries 0xFF67, "get shade time" -- an opcode the emulator
-carries only as a commented-out case, so whether anything answers it is
-the first question.  If the shade returns a weekday it derived from the
-date rather than the one last written, that settles the mapping;
-otherwise it takes a btsnoop capture of the vendor app.
+because every day of the week accepts the whole range.
+
+Phase 3 (--read-time) established that 0xFF67, "get shade time", does
+answer -- 9 bytes, a status byte then the same 8-byte layout -- although
+the emulator carries it only as a commented-out case.  Phase 4
+(--resolve-dow) then wrote weekdays contradicting the date and read them
+back: the shade echoed every one, so it stores the byte without ever
+interpreting it and cannot be made to reveal the mapping.
+
+Phase 5 (--set-dow N) is the way round that.  The shade holds whatever it
+is given, and the vendor app and G3 gateway both push clock updates of
+their own, so parking a value neither could have chosen and then reading
+back after the vendor has written turns the vendor into the oracle for
+its own convention.
 
 UNLIKE shade_report.py, THIS SCRIPT WRITES.  It sends exactly one opcode,
 0xFF77, and nothing else -- no move, no scene, no rekey, no power-type
@@ -371,7 +379,48 @@ async def _resolve_dow(api: PowerViewClient) -> int:
     return outcome
 
 
-async def _probe(ble_name: str, hub: str, scan_timeout: float, mode: str) -> int:
+async def _set_dow(api: PowerViewClient, dow: int) -> int:
+    """Write the current time with a chosen weekday byte and leave it there.
+
+    This is the vendor cross-check.  The shade stores the weekday without
+    interpreting it, so it will never reveal the mapping on its own -- but
+    the vendor will.  Park a value the app cannot have chosen, let the app
+    or the G3 gateway push its own clock update, then --read-time: whatever
+    the weekday byte reads afterwards is the vendor's code for that day.
+    """
+    now = datetime.now().replace(microsecond=0)
+    code, note = _describe(await api.query(CMD_SET_TIME, _core(now) + bytes([dow])))
+    shown = f"0x{code:02X} {note}" if code is not None else note
+    print(f"Wrote {now:%Y-%m-%d %H:%M:%S} with weekday {dow}: {shown}")
+    if code:
+        return 1
+    print(
+        f"\n  Today is a {now:%A}. isoweekday would be {now.isoweekday()}; "
+        f"a Sunday=1 scheme\n"
+        f"  would be {now.isoweekday() % 7 + 1}. Parked {dow}, which is "
+        f"neither.\n\n"
+        f"  Now operate this shade from the PowerView app, or wait for the "
+        f"G3 gateway's\n"
+        f"  daily clock sync, then re-run with --read-time. If the weekday "
+        f"byte has changed,\n"
+        f"  the new value is the vendor's code for {now:%A} and settles the "
+        f"mapping."
+    )
+    return 0
+
+
+async def _run_single(api: PowerViewClient, mode: str, set_dow: int) -> int:
+    """Dispatch the one-shot (non-sweep) modes."""
+    if mode == "read":
+        return await _read_time(api)
+    if mode == "set":
+        return await _set_dow(api, set_dow)
+    return await _resolve_dow(api)
+
+
+async def _probe(
+    ble_name: str, hub: str, scan_timeout: float, mode: str, set_dow: int = 0
+) -> int:
     home_key = _fetch_home_key(hub)
     if home_key is None:
         return 1
@@ -383,11 +432,9 @@ async def _probe(ble_name: str, hub: str, scan_timeout: float, mode: str) -> int
         print(f"  {ble_name} not seen on air. Aborting.")
         return 1
 
-    if mode in ("read", "resolve"):
+    if mode in ("read", "resolve", "set"):
         async with PowerViewClient(dev, home_key) as api:
-            if mode == "read":
-                return await _read_time(api)
-            return await _resolve_dow(api)
+            return await _run_single(api, mode, set_dow)
 
     dow_sweep = mode == "dow"
     build = _dow_candidates if dow_sweep else _candidates
@@ -479,8 +526,20 @@ def main() -> int:
             "back, to tell storage from derivation"
         ),
     )
+    mode.add_argument(
+        "--set-dow",
+        type=int,
+        choices=range(1, 8),
+        metavar="N",
+        help=(
+            "Phase 5: park weekday N (1-7) and leave it, for the vendor "
+            "cross-check; follow with --read-time"
+        ),
+    )
     args = parser.parse_args()
-    if args.resolve_dow:
+    if args.set_dow:
+        chosen = "set"
+    elif args.resolve_dow:
         chosen = "resolve"
     elif args.read_time:
         chosen = "read"
@@ -488,7 +547,9 @@ def main() -> int:
         chosen = "dow"
     else:
         chosen = "sweep"
-    return asyncio.run(_probe(args.ble_name, args.hub, args.scan_timeout, chosen))
+    return asyncio.run(
+        _probe(args.ble_name, args.hub, args.scan_timeout, chosen, args.set_dow or 0)
+    )
 
 
 if __name__ == "__main__":
