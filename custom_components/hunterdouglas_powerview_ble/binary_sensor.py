@@ -8,12 +8,12 @@ from homeassistant.components.binary_sensor import (
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothCoordinatorEntity,
 )
-from homeassistant.const import ATTR_BATTERY_CHARGING
+from homeassistant.const import ATTR_BATTERY_CHARGING, EntityCategory
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from . import ConfigEntryType
+from . import ConfigEntryType, async_setup_shade_platform
 from .const import DOMAIN
 from .coordinator import PVCoordinator
 
@@ -22,25 +22,51 @@ BINARY_SENSOR_TYPES: list[BinarySensorEntityDescription] = [
         key=ATTR_BATTERY_CHARGING,
         translation_key=ATTR_BATTERY_CHARGING,
         device_class=BinarySensorDeviceClass.BATTERY_CHARGING,
-    )
+    ),
+    # Diagnostic flags from byte 8 of the BLE advertisement. They surface when
+    # a battery wand has been removed (charging) and the shade has lost its
+    # RTC / scheduling state — see the "shade unresponsive after charging"
+    # known issue. Disabled by default to keep the device page clean for
+    # users who aren't debugging this scenario.
+    BinarySensorEntityDescription(
+        key="reset_clock",
+        translation_key="reset_clock",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
+    BinarySensorEntityDescription(
+        key="reset_mode",
+        translation_key="reset_mode",
+        device_class=BinarySensorDeviceClass.PROBLEM,
+        entity_registry_enabled_default=False,
+        entity_category=EntityCategory.DIAGNOSTIC,
+    ),
 ]
 
 
+def _add_entities(
+    coordinator: PVCoordinator, async_add_entities: AddEntitiesCallback
+) -> None:
+    """Create binary sensor entities for a single shade coordinator."""
+    mac = format_mac(coordinator.address)
+    async_add_entities(
+        PVBinarySensor(coordinator, descr, mac) for descr in BINARY_SENSOR_TYPES
+    )
+
+
 async def async_setup_entry(
-    _hass: HomeAssistant,
+    hass: HomeAssistant,
     config_entry: ConfigEntryType,
     async_add_entities: AddEntitiesCallback,
 ) -> None:
     """Add sensors for passed config_entry in Home Assistant."""
-
-    coord: PVCoordinator = config_entry.runtime_data
-    for descr in BINARY_SENSOR_TYPES:
-        async_add_entities(
-            [PVBinarySensor(coord, descr, format_mac(config_entry.unique_id))]
-        )
+    async_setup_shade_platform(hass, config_entry, async_add_entities, _add_entities)
 
 
-class PVBinarySensor(PassiveBluetoothCoordinatorEntity[PVCoordinator], BinarySensorEntity):  # type: ignore[reportIncompatibleMethodOverride]
+class PVBinarySensor(
+    PassiveBluetoothCoordinatorEntity[PVCoordinator], BinarySensorEntity
+):  # type: ignore[reportIncompatibleMethodOverride]
     """The generic PV binary sensor implementation."""
 
     def __init__(
@@ -59,4 +85,6 @@ class PVBinarySensor(PassiveBluetoothCoordinatorEntity[PVCoordinator], BinarySen
     @property
     def is_on(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
         """Handle updated data from the coordinator."""
+        if not self.coordinator.data_available:
+            return None
         return bool(self.coordinator.data.get(self.entity_description.key))

@@ -55,12 +55,15 @@ def get_shade_key(hub: str, ble_name) -> bytes:
         raise
 
     result: dict = json.loads(shades_exec_resp.content)
-    if result.get("err") != 0 or len(result.get("responses", [])) != 1:
-        raise OSError("Error when attempting GetShadeKey")
-    response: Final[bytes] = bytes.fromhex(result["responses"][0]["hex"])
+    responses = result.get("responses", [])
+    if len(responses) != 1 or "hex" not in responses[0]:
+        raise OSError(f"Error when attempting GetShadeKey: {result}")
+    response: Final[bytes] = bytes.fromhex(responses[0]["hex"])
     dec_resp: Final[dict[str, Any]] = decode_response(response)
     if dec_resp["errorCode"] != 0:
-        raise ValueError("BLE errorCode is not 0")
+        raise ValueError(
+            f"BLE errorCode={dec_resp['errorCode']} data={dec_resp['data'].hex()}"
+        )
     if len(dec_resp["data"]) != 16:
         raise ValueError("Expected 16 byte homekey")
     return dec_resp["data"]
@@ -79,9 +82,23 @@ def main(hub: str) -> int:
 
     shades = json.loads(shades_resp.content)
     print(f"Found {len(shades)} shades, interrogating")
+    network_key: bytes | None = None
     for shade in shades:
         name: str = base64.b64decode(shade["name"]).decode("utf-8")
-        key: bytes = get_shade_key(hub, shade["bleName"])
+        try:
+            key: bytes = get_shade_key(hub, shade["bleName"])
+            network_key = key
+        except (OSError, ValueError) as ex:
+            if network_key is not None:
+                key = network_key
+                print(f"Shade '{name}':")
+                print(f"\tBLE name: '{shade['bleName']}'")
+                print(f"\tHomeKey: {key.hex()} (shade unreachable, using network key)")
+            else:
+                print(f"Shade '{name}':")
+                print(f"\tBLE name: '{shade['bleName']}'")
+                print(f"\tHomeKey: ERROR - {ex}")
+            continue
 
         print(f"Shade '{name}':")
         print(f"\tBLE name: '{shade['bleName']}'")

@@ -1,14 +1,54 @@
 {
     "config": {
+        "flow_title": "PowerView Home Setup",
+        "step": {
+            "user": {
+                "title": "Set up PowerView Home",
+                "description": "Configure your PowerView encryption key. All shades on your network will be discovered automatically via Bluetooth.",
+                "data": {
+                    "key_method": "Key source",
+                    "hub_url": "PowerView hub URL",
+                    "home_key": "HomeKey (32 hex characters or \\xNN format)"
+                },
+                "data_description": {
+                    "hub_url": "Base URL of your PowerView G3 hub, e.g. {hub_url_example}",
+                    "home_key": "32-character hex string (e.g. 0102030405060708090a0b0c0d0e0f10) or \\x escaped format (e.g. \\x01\\x02...)"
+                }
+            },
+            "zeroconf_confirm": {
+                "title": "PowerView gateway discovered",
+                "description": "A PowerView G3 gateway was found at {name}. Choose how to configure your encryption key — fetch it automatically from the gateway, enter it manually, or skip. All shades on your network will be discovered automatically via Bluetooth.",
+                "data": {
+                    "key_method": "Key source",
+                    "hub_url": "PowerView hub URL",
+                    "home_key": "HomeKey (32 hex characters or \\xNN format)"
+                },
+                "data_description": {
+                    "hub_url": "Base URL of your PowerView G3 hub, e.g. {hub_url_example}",
+                    "home_key": "32-character hex string (e.g. 0102030405060708090a0b0c0d0e0f10) or \\x escaped format (e.g. \\x01\\x02...)"
+                }
+            }
+        },
+        "error": {
+            "invalid_key_format": "HomeKey must be a valid hexadecimal string",
+            "invalid_key_length": "HomeKey must be exactly 32 hex characters (16 bytes)",
+            "hub_connection_error": "Cannot connect to the PowerView hub",
+            "hub_http_error": "Hub returned an HTTP error",
+            "hub_timeout": "Connection to hub timed out",
+            "hub_protocol_error": "Hub returned an unexpected response"
+        },
         "abort": {
             "already_configured": "Device is already configured",
-            "no_devices_found": "No devices found on the network",
-            "not_supported": "Device not supported"
-        },
-        "flow_title": "Setup {name}",
-        "step": {
-            "bluetooth_confirm": {
-                "description": "Do you want to set up {name}?"
+            "single_instance_allowed": "Already configured. Only a single configuration possible."
+        }
+    },
+    "entity": {
+        "binary_sensor": {
+            "reset_clock": {
+                "name": "Clock reset required"
+            },
+            "reset_mode": {
+                "name": "Mode reset required"
             }
         }
     }
