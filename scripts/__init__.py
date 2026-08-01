@@ -1,1 +1,1 @@
-"""Script to extract PowerView homekey from a G3 PowerView Gateway."""
+"""Standalone helper scripts. Not part of the integration."""
