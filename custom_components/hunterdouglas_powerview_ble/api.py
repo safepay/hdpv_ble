@@ -27,7 +27,6 @@ from .const import LOGGER, TIMEOUT
 UUID_COV_SERVICE: Final[str] = normalize_uuid_str("fdc1")
 UUID_TX: Final[str] = "cafe1001-c0ff-ee01-8000-a110ca7ab1e0"
 UUID_DEV_SERVICE: Final[str] = normalize_uuid_str("180a")
-UUID_BAT_SERVICE: Final[str] = normalize_uuid_str("180f")
 
 ATTR_ACTIVITY: Final[str] = "activity"
 
@@ -498,14 +497,11 @@ class PowerViewBLE:
             services=[
                 UUID_COV_SERVICE,
                 UUID_DEV_SERVICE,
-                # self.UUID_BAT_SERVICE,
             ],
         )
         await self._client.start_notify(UUID_TX, self._notification_handler)
 
         LOGGER.debug("\tconnect took %is", time.time() - start)
-
-        # await self._query_dev_info()
 
     async def disconnect(self) -> None:
         """Disconnect the device and stop notifications."""
