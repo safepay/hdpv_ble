@@ -1,0 +1,24 @@
+name: Validate
+
+on:
+  # Branch pushes are covered by the pull_request trigger, so push is limited to
+  # main to stop every commit on an open PR running this twice.
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions: {}
+
+jobs:
+  validate-hacs:
+    runs-on: "ubuntu-latest"
+    name: Validate with HACS Action
+    steps:
+      - name: HACS validation
+        uses: "hacs/action@main"
+        with:
+          category: "integration"
+          # No `ignore: brands` here: the domain is already registered at
+          # home-assistant/brands under custom_integrations. If the brands check
+          # starts failing, fix it rather than skipping it.

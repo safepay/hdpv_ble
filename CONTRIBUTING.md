@@ -1,7 +1,8 @@
 # Contributing
 
 ## Issues
-In case you have troubles, please enable the debug protocol for the integration and [open an issue](https://github.com/patman15/hdpv_ble/issues) with a good description of what happened and the relevant snippet from the log.
+
+In case you have troubles, please enable the debug protocol for the integration and [open an issue](https://github.com/safepay/hdpv_ble/issues) with a good description of what happened and the relevant snippet from the log.
 
 ### Any contributions you make will be under the Apache License Version 2.0
 
