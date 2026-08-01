@@ -127,13 +127,16 @@ The type ID is shown in the PowerView app under *product info → type ID*.
 
 Behaviour | Type IDs
 -- | --
-Position only | 1, 4, 5, 6, 19, 26, 27, 28, 31, 32, 42, 49, 52, 53, 57, 69, 70, 71, 84
+Position only | 1, 4, 5, 6, 19, 26, 27, 28, 31, 32, 38, 42, 49, 52, 53, 57, 65, 69, 70, 71, 79, 84, 95
 Position and tilt | 51, 54, 55, 56, 62, 103
 Tilt only | 39, 40, 66
 Tilt when fully closed | 18, 23, 43, 44, 72
 Top-down, single rail | 7, 10
-Top-down/bottom-up, dual rail | 8, 33, 47
-Dual overlapping fabrics | 9, 38, 65, 79, 95
+Top-down/bottom-up, dual rail | 8, 9, 33, 47
+
+Shades with two overlapping fabrics (9, 38, 65, 79, 95) are driven as a single
+fabric — the second sheer or blackout layer is not exposed yet. On those types
+the tilt of type 38 and the backlight of type 95 are also unavailable.
 
 If your shade isn't listed, open an issue with its type ID and a diagnostics
 download — [`scripts/shade_report.py`](scripts/shade_report.py) dumps the raw
