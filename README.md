@@ -139,8 +139,9 @@ fabric — the second sheer or blackout layer is not exposed yet. On those types
 the tilt of type 38 and the backlight of type 95 are also unavailable.
 
 If your shade isn't listed, open an issue with its type ID and a diagnostics
-download — [`scripts/shade_report.py`](scripts/shade_report.py) dumps the raw
-bytes needed to work out a new type.
+download. [`scripts/shade_report.py`](scripts/shade_report.py) dumps the same raw
+bytes without your shade's name or serial number, if you have a G3 hub for it to
+read the home key from.
 
 ## How it works
 
