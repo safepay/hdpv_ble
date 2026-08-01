@@ -34,10 +34,17 @@ back: the shade echoed every one, so it stores the byte without ever
 interpreting it and cannot be made to reveal the mapping.
 
 Phase 5 (--set-dow N) is the way round that.  The shade holds whatever it
-is given, and the vendor app and G3 gateway both push clock updates of
-their own, so parking a value neither could have chosen and then reading
-back after the vendor has written turns the vendor into the oracle for
-its own convention.
+is given, and the vendor pushes clock updates of its own, so parking a
+value the vendor could not have chosen and reading back after it writes
+turns the vendor into the oracle for its own convention.
+
+The catch is getting the vendor to write.  Driving a shade from the
+PowerView app with a G3 gateway present does NOT do it: the app talks to
+the gateway, which relays over its own radio, so no direct BLE session is
+opened and no clock is pushed -- observed, with the parked value coming
+back untouched.  The app pushes only when it must reach the shade over
+BLE itself, which means powering the gateway off.  Use --home-key there,
+since the hub cannot serve the key while it is off.
 
 UNLIKE shade_report.py, THIS SCRIPT WRITES.  It sends exactly one opcode,
 0xFF77, and nothing else -- no move, no scene, no rekey, no power-type
@@ -174,11 +181,30 @@ def _fetch_home_key(hub: str) -> bytes | None:
         shades, key=lambda s: s.get("signalStrength", -100), reverse=True
     ):
         try:
-            return get_shade_key(hub, shade["bleName"])
+            key = get_shade_key(hub, shade["bleName"])
         except Exception as ex:  # noqa: BLE001
             print(f"  {shade['bleName']}: {ex} — trying next shade...")
+            continue
+        print(f"  got it via {shade['bleName']}: {key.hex()}")
+        print("  (pass --home-key with that to skip the hub next time)")
+        return key
     print("Could not fetch the homekey from any shade.")
     return None
+
+
+def _resolve_key(hub: str, home_key_hex: str | None) -> bytes | None:
+    """Take the key from the command line if given, else ask the hub."""
+    if home_key_hex is None:
+        return _fetch_home_key(hub)
+    try:
+        key = bytes.fromhex(home_key_hex)
+    except ValueError:
+        print("--home-key must be hex characters only.")
+        return None
+    if len(key) != 16:
+        print(f"--home-key must decode to 16 bytes, got {len(key)}.")
+        return None
+    return key
 
 
 async def _sweep(
@@ -256,13 +282,29 @@ def _decode_time(body: bytes) -> None:
         f"  {real:%Y-%m-%d} is a {real:%A} — isoweekday {real.isoweekday()}, "
         f"weekday {real.weekday()}."
     )
+    iso = real.isoweekday()
+    sun1 = iso % 7 + 1
+    if dow in (iso, sun1):
+        scheme = "isoweekday (Mon=1..Sun=7)" if dow == iso else "Sunday=1..Saturday=7"
+        print(
+            f"  Weekday {dow} is what {scheme} calls {real:%A}.\n"
+            f"  If this follows a --set-dow park of some other value, the "
+            f"vendor has written\n"
+            f"  and that scheme is the firmware's convention."
+        )
+        return
     print(
-        f"  Stored weekday is {dow}. Matching the byte last written proves "
-        f"nothing by itself:\n"
-        f"  the shade may be storing that byte, or deriving it from the date "
-        f"and agreeing by\n"
-        f"  coincidence. Run --resolve-dow, which writes a weekday that "
-        f"contradicts the date."
+        f"  Weekday {dow} matches neither candidate for {real:%A} "
+        f"(isoweekday {iso}, Sunday=1 {sun1}),\n"
+        f"  so nothing has overwritten it and this is still a parked value.\n\n"
+        f"  The vendor app pushes a clock only over a direct BLE session, and "
+        f"it will not\n"
+        f"  open one while a gateway is relaying for it. Power the gateway "
+        f"off, drive the\n"
+        f"  shade from the app, then read back with --home-key (the hub "
+        f"cannot serve it\n"
+        f"  while off). Failing that, the gateway's own daily sync will "
+        f"eventually write."
     )
 
 
@@ -432,9 +474,14 @@ async def _run_single(api: PowerViewClient, mode: str, set_dow: int) -> int:
 
 
 async def _probe(
-    ble_name: str, hub: str, scan_timeout: float, mode: str, set_dow: int = 0
+    ble_name: str,
+    hub: str,
+    scan_timeout: float,
+    mode: str,
+    set_dow: int = 0,
+    home_key_hex: str | None = None,
 ) -> int:
-    home_key = _fetch_home_key(hub)
+    home_key = _resolve_key(hub, home_key_hex)
     if home_key is None:
         return 1
 
@@ -509,6 +556,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--hub", default=HUB, help=f"Gateway URL (default: {HUB})")
     parser.add_argument(
+        "--home-key",
+        help=(
+            "Home key as 32 hex characters, skipping the hub fetch. Needed "
+            "with the gateway powered off, which is how the vendor app is "
+            "forced onto a direct BLE session"
+        ),
+    )
+    parser.add_argument(
         "--ble-name", required=True, help="BLE name of the shade, e.g. 'DUE:7C82'"
     )
     parser.add_argument(
@@ -561,7 +616,14 @@ def main() -> int:
     else:
         chosen = "sweep"
     return asyncio.run(
-        _probe(args.ble_name, args.hub, args.scan_timeout, chosen, args.set_dow or 0)
+        _probe(
+            args.ble_name,
+            args.hub,
+            args.scan_timeout,
+            chosen,
+            args.set_dow or 0,
+            args.home_key,
+        )
     )
 
 
