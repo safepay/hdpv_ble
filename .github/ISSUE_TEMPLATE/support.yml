@@ -5,18 +5,23 @@ labels: "question"
 body:
 - type: markdown
   attributes:
-    value: Before you open a new issue, search through the existing issues to see if others have had the same problem.
-- type: checkboxes
-  attributes:
-    label: Checklist
-    options:
-      - label: I need support with using the integration.
-        required: true
-      - label: This is not a bug report avoiding the [bug report](https://github.com/safepay/hdpv_ble/issues/new?assignees=&labels=Bug&projects=&template=bug.yml) form.
-        required: true
+    value: |
+      Please check the [existing questions](https://github.com/safepay/hdpv_ble/issues?q=is%3Aissue+label%3Aquestion) first. If something is broken rather than unclear, the [bug report](https://github.com/safepay/hdpv_ble/issues/new?template=bug.yml) form asks for the details needed to diagnose it.
 - type: textarea
   attributes:
-    label: "Describe the issue"
-    description: "Please describe your issue, ask your question and give necessary context (shade type ID, whether you use a Bluetooth proxy or a PowerView hub)."
+    label: "What do you need help with"
+    description: "Your question, and what you have tried so far."
   validations:
     required: true
+- type: input
+  attributes:
+    label: "Shade type ID"
+    description: "From the PowerView app, under *product info → type ID*, if the question is about a particular shade."
+    placeholder: "8"
+- type: checkboxes
+  attributes:
+    label: "Setup"
+    description: "Tick whatever applies — it usually changes the answer."
+    options:
+      - label: "Home Assistant reaches my shades through an ESPHome or other Bluetooth proxy"
+      - label: "I have a PowerView G3 hub configured in the integration"
