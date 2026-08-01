@@ -85,6 +85,13 @@ STATUS_LABELS: dict[int, str] = {
 MAX_PAYLOAD = 16
 
 
+def _core(now: datetime) -> bytes:
+    """Build the seven time bytes the emulator documents, minus the weekday."""
+    return int.to_bytes(now.year, 2, "little") + bytes(
+        [now.month, now.day, now.hour, now.minute, now.second]
+    )
+
+
 def _candidates(now: datetime) -> list[tuple[str, bytes]]:
     """Return (label, payload) pairs to try, cheapest hypothesis first.
 
@@ -94,8 +101,7 @@ def _candidates(now: datetime) -> list[tuple[str, bytes]]:
     the case where a length is accepted but the field order differs from
     the emulator's.
     """
-    year_le = int.to_bytes(now.year, 2, "little")
-    core = year_le + bytes([now.month, now.day, now.hour, now.minute, now.second])
+    core = _core(now)
     # Correct time in the fields we know, zeros beyond them.  A zero tail is
     # enough to identify the right length even if those trailing fields mean
     # something; content gets pinned down once the length is known.
@@ -133,9 +139,7 @@ def _dow_candidates(now: datetime) -> list[tuple[str, bytes]]:
       a contiguous run       -> the shade only bounds-checks, so an
         in-range code can still store the wrong weekday
     """
-    core = int.to_bytes(now.year, 2, "little") + bytes(
-        [now.month, now.day, now.hour, now.minute, now.second]
-    )
+    core = _core(now)
     return [
         (f"dow {code:>2} (0x{code:02X})", core + bytes([code])) for code in range(16)
     ]
@@ -245,11 +249,12 @@ def _decode_time(body: bytes) -> None:
         f"weekday {real.weekday()}."
     )
     print(
-        f"  If {dow} differs from the byte last written, the shade derives "
-        f"the weekday itself\n"
-        f"  and {dow} is this firmware's code for {real:%A}. If it matches, "
-        f"the shade only stores\n"
-        f"  what it is given and the mapping needs a vendor-app capture."
+        f"  Stored weekday is {dow}. Matching the byte last written proves "
+        f"nothing by itself:\n"
+        f"  the shade may be storing that byte, or deriving it from the date "
+        f"and agreeing by\n"
+        f"  coincidence. Run --resolve-dow, which writes a weekday that "
+        f"contradicts the date."
     )
 
 
@@ -283,6 +288,89 @@ async def _read_time(api: PowerViewClient) -> int:
     return 0
 
 
+async def _stored_dow(api: PowerViewClient) -> int | None:
+    """Read the clock back and return just the stored weekday byte."""
+    reply = await api.query(CMD_GET_TIME, b"")
+    # 9 bytes: status, then the 8-byte set-time layout, weekday last.
+    if len(reply) < 9 or reply[0]:
+        return None
+    return reply[8]
+
+
+async def _resolve_dow(api: PowerViewClient) -> int:
+    """Write weekdays that contradict the date, then read them back.
+
+    Phase 3 left this open because the value last written happened to
+    equal the value read back, which a shade that merely stores the byte
+    and a shade that derives it from the date would both produce.  Writing
+    a weekday that cannot be right for today breaks that tie: an echo means
+    the shade only stores what it is given, and a different answer means it
+    derives the weekday -- in which case that answer is today's code.
+    """
+    today = datetime.now().isoweekday()
+    # Both decoys sit inside the accepted 1..7 range and both are wrong for
+    # today under either candidate convention, so neither can accidentally
+    # be the right answer.
+    decoys = [d for d in (2, 3, 5, 6) if d not in (today, today % 7 + 1)][:2]
+    print(f"Today is a {datetime.now():%A}. Writing decoy weekdays {decoys}.\n")
+
+    seen: list[tuple[int, int | None]] = []
+    for decoy in decoys:
+        code, _ = _describe(
+            await api.query(CMD_SET_TIME, _core(datetime.now()) + bytes([decoy]))
+        )
+        if code is None:
+            print(f"  wrote {decoy}: malformed reply — skipping")
+            continue
+        if code:
+            print(f"  wrote {decoy}: refused (0x{code:02X}) — skipping")
+            continue
+        got = await _stored_dow(api)
+        print(f"  wrote {decoy} -> read back {got}")
+        seen.append((decoy, got))
+
+    print()
+    if not seen:
+        print("Every decoy was refused; nothing can be concluded.")
+        return 1
+    if all(got == wrote for wrote, got in seen):
+        print(
+            "The shade echoed every decoy, so it only stores the byte and "
+            "never derives it.\n"
+            "  Which code means which day is set by whatever the vendor app "
+            "sends, so the\n"
+            "  remaining route is a btsnoop capture. Note the shade will "
+            "happily hold a\n"
+            "  weekday that contradicts its own date."
+        )
+        outcome = 0
+    else:
+        answers = {got for _, got in seen}
+        if len(answers) == 1:
+            code = answers.pop()
+            print(
+                f"The shade overrode every decoy with {code}, so it derives "
+                f"the weekday from the\n"
+                f"  date. {code} is this firmware's code for "
+                f"{datetime.now():%A}."
+            )
+        else:
+            print(f"Inconsistent answers {answers} — needs a closer look.")
+        outcome = 0
+
+    # Leave the shade holding our best guess rather than a decoy.
+    now = datetime.now().replace(microsecond=0)
+    code, note = _describe(
+        await api.query(CMD_SET_TIME, _core(now) + bytes([now.isoweekday()]))
+    )
+    shown = f"0x{code:02X} {note}" if code is not None else note
+    print(
+        f"\nRestored {now:%Y-%m-%d %H:%M:%S}, weekday "
+        f"{now.isoweekday()} (isoweekday): {shown}"
+    )
+    return outcome
+
+
 async def _probe(ble_name: str, hub: str, scan_timeout: float, mode: str) -> int:
     home_key = _fetch_home_key(hub)
     if home_key is None:
@@ -295,9 +383,11 @@ async def _probe(ble_name: str, hub: str, scan_timeout: float, mode: str) -> int
         print(f"  {ble_name} not seen on air. Aborting.")
         return 1
 
-    if mode == "read":
+    if mode in ("read", "resolve"):
         async with PowerViewClient(dev, home_key) as api:
-            return await _read_time(api)
+            if mode == "read":
+                return await _read_time(api)
+            return await _resolve_dow(api)
 
     dow_sweep = mode == "dow"
     build = _dow_candidates if dow_sweep else _candidates
@@ -381,8 +471,18 @@ def main() -> int:
         action="store_true",
         help="Phase 3: read the clock back with 0xFF67 and decode it",
     )
+    mode.add_argument(
+        "--resolve-dow",
+        action="store_true",
+        help=(
+            "Phase 4: write weekdays that contradict the date and read them "
+            "back, to tell storage from derivation"
+        ),
+    )
     args = parser.parse_args()
-    if args.read_time:
+    if args.resolve_dow:
+        chosen = "resolve"
+    elif args.read_time:
         chosen = "read"
     elif args.dow_sweep:
         chosen = "dow"
