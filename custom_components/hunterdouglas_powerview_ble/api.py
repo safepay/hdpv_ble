@@ -37,7 +37,6 @@ SHADE_TYPE: Final[dict[int, str]] = {
     4: "Roman",
     5: "Bottom Up",
     6: "Duette",
-    10: "Duette and Applause SkyLift",
     19: "Provenance Woven Wood",
     26: "Skyline Panel, Left Stack",
     27: "Skyline Panel, Right Stack",
@@ -55,6 +54,7 @@ SHADE_TYPE: Final[dict[int, str]] = {
     84: "Vignette",
     # top down (single rail, inverted position)
     7: "Top Down",
+    10: "Duette and Applause SkyLift",
     # top down bottom up (dual rail)
     8: "Duette, Top Down Bottom Up",
     9: "Duette DuoLite, Top Down Bottom Up",
