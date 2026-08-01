@@ -194,10 +194,16 @@ key redacted, which is usually enough to identify a problem without a round trip
 
 ## Known issues
 
-<details><summary>Shade inoperable after charging</summary>
+<details><summary>Schedules stop after a shade loses power</summary>
 
-Shades appear to need re-initialising after a charge. The cause is not yet
-understood; operating the shade once from the vendor app clears it.
+A shade that loses power — a battery wand pulled for charging, or mains
+interrupted — restarts without a valid clock, so schedules stored on the shade
+stop running. It reports this as the `Clock reset required` diagnostic sensor.
+The shade still takes movement commands normally; only its own timed behaviour
+is affected.
+
+The integration sets the shade's clock each time it connects, so operating the
+shade from Home Assistant clears it.
 </details>
 
 ## Credits

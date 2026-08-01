@@ -21,6 +21,7 @@ from homeassistant.components.cover import (
     ATTR_CURRENT_POSITION,
     ATTR_CURRENT_TILT_POSITION,
 )
+from homeassistant.util import dt as dt_util
 
 from .const import LOGGER, TIMEOUT
 
@@ -191,6 +192,10 @@ class ShadeCmd(Enum):
     ACTIVATE_SCENE = 0xBAF7
     IDENTIFY = 0x11F7
     POWER_STATUS = 0xDEFF
+    # Values are the emulator's `(serviceID << 8) | cmdID` constants
+    # byte-swapped, because _transact writes them little-endian: the
+    # emulator's 0xFF77 "set shade time" is 0x77FF here.
+    SET_TIME = 0x77FF
 
 
 @dataclass
@@ -501,6 +506,51 @@ class PowerViewBLE:
 
         self._data_event.set()
 
+    async def _set_time(self) -> None:
+        """Push the current local time to the shade. Best effort, never raises.
+
+        A shade that loses power stops its clock and comes back not knowing
+        the time, so its stored schedules stay dormant until something tells
+        it -- it advertises this as the `reset_clock` flag. Hunter Douglas
+        say the vendor app pushes the time when it next connects and a G3
+        gateway does so at least daily, which is what "operate the shade once
+        from the app" was really fixing. Doing it on every connect matches
+        that and costs one round trip per physical connection.
+
+        Failure is not the caller's problem: this is an unsolicited extra, so
+        it must never take down the command the caller actually asked for.
+        """
+        if self._is_encrypted and self._cipher is None:
+            return  # would put plaintext on the wire; the shade would ignore it
+        now = dt_util.now()
+        payload: Final[bytes] = int.to_bytes(now.year, 2, byteorder="little") + bytes(
+            [now.month, now.day, now.hour, now.minute, now.second]
+        )
+        try:
+            seq = await self._transact((ShadeCmd.SET_TIME, payload))
+        except (BleakError, TimeoutError) as ex:
+            LOGGER.debug("%s: clock update failed: %s", self.name, ex)
+            return
+        # Validated inline rather than via _verify_ack_reply, which logs at
+        # error level -- a shade that does not know this opcode must not fill
+        # the log on every connect. Watch the `reset_clock` flag in the next
+        # advertisement to see whether the shade accepted it.
+        ack: Final[bytes] = int.to_bytes(
+            ShadeCmd.SET_TIME.value & 0xFFEF, 2, byteorder="little"
+        )
+        accepted: Final[bool] = (
+            len(self._data) > 4
+            and self._data[0:2] == ack
+            and self._data[2] == seq
+            and self._data[4] == 0
+        )
+        LOGGER.debug(
+            "%s: clock set to %s, shade %s",
+            self.name,
+            now.isoformat(),
+            "accepted" if accepted else "did not acknowledge",
+        )
+
     async def _connect(self) -> None:
         """Connect to the device and setup notification if not connected."""
 
@@ -525,6 +575,10 @@ class PowerViewBLE:
         await self._client.start_notify(UUID_TX, self._notification_handler)
 
         LOGGER.debug("\tconnect took %is", time.time() - start)
+
+        # Only on a fresh connection -- the early return above means a shade
+        # that is already connected does not get a second push.
+        await self._set_time()
 
     async def disconnect(self) -> None:
         """Disconnect the device and stop notifications."""
