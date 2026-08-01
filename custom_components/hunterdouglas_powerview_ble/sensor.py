@@ -61,14 +61,14 @@ async def async_setup_entry(
 
 
 class PVSensor(PassiveBluetoothCoordinatorEntity[PVCoordinator], SensorEntity):  # type: ignore[reportIncompatibleMethodOverride]
-    """The generic BMS sensor implementation."""
+    """The generic shade sensor implementation."""
 
     _attr_has_entity_name = True
 
     def __init__(
         self, pv_dev: PVCoordinator, descr: SensorEntityDescription, unique_id: str
     ) -> None:
-        """Initialize the BMS sensor."""
+        """Initialize the shade sensor."""
         self._attr_unique_id = f"{DOMAIN}-{unique_id}-{descr.key}"
         self._attr_device_info = pv_dev.device_info
         self.entity_description = descr

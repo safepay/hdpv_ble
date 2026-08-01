@@ -21,7 +21,7 @@ from .const import ATTR_RSSI, CONF_HOME_KEY, DOMAIN, LOGGER
 
 
 class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
-    """Update coordinator for a battery management system."""
+    """Update coordinator for a single PowerView shade."""
 
     # Firmware isn't in the advert — pull it via GATT. Retry every minute
     # while empty, then re-check daily so firmware upgrades eventually surface.
@@ -40,7 +40,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         data: dict[str, Any],
         friendly_name: str | None = None,
     ) -> None:
-        """Initialize BMS data coordinator."""
+        """Initialize the shade data coordinator."""
         assert ble_device.name is not None
         self._friendly_name = friendly_name or ble_device.name
         home_key_hex: str = data.get(CONF_HOME_KEY, "")
@@ -179,7 +179,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
 
     def _async_stop(self) -> None:
         """Shutdown coordinator and any connection."""
-        LOGGER.debug("%s: shutting down BMS device", self.name)
+        LOGGER.debug("%s: shutting down shade", self.name)
         if self._dev_info_task is not None and not self._dev_info_task.done():
             self._dev_info_task.cancel()
         self.hass.async_create_task(self.api.disconnect())
