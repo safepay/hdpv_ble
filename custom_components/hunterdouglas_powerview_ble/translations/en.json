@@ -43,6 +43,23 @@
     }
   },
   "entity": {
+    "cover": {
+      "top_rail": {
+        "name": "Top rail"
+      },
+      "bottom_rail": {
+        "name": "Bottom rail"
+      },
+      "combined": {
+        "name": "Combined"
+      },
+      "front": {
+        "name": "Front"
+      },
+      "rear": {
+        "name": "Rear"
+      }
+    },
     "binary_sensor": {
       "reset_clock": {
         "name": "Clock reset required"

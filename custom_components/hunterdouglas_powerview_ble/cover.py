@@ -1,6 +1,7 @@
 """Hunter Douglas Powerview cover."""
 
-from typing import Any, Final
+from math import ceil
+from typing import Any
 
 from bleak.exc import BleakError
 
@@ -16,14 +17,19 @@ from homeassistant.components.cover import (
     CoverEntity,
     CoverEntityFeature,
 )
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ConfigEntryType, async_setup_shade_platform
-from .api import CLOSED_POSITION, OPEN_POSITION
+from .api import CLOSED_POSITION, OPEN_POSITION, ShadeMove
 from .const import DOMAIN, LOGGER
 from .coordinator import PVCoordinator
+
+# Position at which the duolite front sheer hands over to the rear opaque
+# fabric. One motor drives both, so Home Assistant's single 0-100 scale is
+# split in half: below this the rear fabric moves, above it the front does.
+DUOLITE_MIDPOINT = 50
 
 
 def _add_entities(
@@ -33,7 +39,15 @@ def _add_entities(
     caps = coordinator.shade_capabilities
 
     if caps.tilt_only:
-        entities: list[PowerViewCover] = [PowerViewCoverTiltOnly(coordinator)]
+        entities: list[PowerViewCoverBase] = [PowerViewCoverTiltOnly(coordinator)]
+    elif caps.is_duolite:
+        entities = [
+            PowerViewCoverDuoliteCombinedTilt(coordinator)
+            if caps.has_tilt
+            else PowerViewCoverDuoliteCombined(coordinator),
+            PowerViewCoverDuoliteFront(coordinator),
+            PowerViewCoverDuoliteRear(coordinator),
+        ]
     elif caps.is_tilt_on_closed:
         entities = [PowerViewCoverTiltOnClosed(coordinator)]
     elif caps.has_tilt:
@@ -60,8 +74,15 @@ async def async_setup_entry(
     async_setup_shade_platform(hass, config_entry, async_add_entities, _add_entities)
 
 
-class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEntity):  # type: ignore[reportIncompatibleVariableOverride]
-    """Representation of a PowerView shade with Up/Down functionality only."""
+class PowerViewCoverBase(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEntity):  # type: ignore[reportIncompatibleVariableOverride]
+    """Shared behaviour for every PowerView cover entity.
+
+    Deliberately sets no ``_attr_name``: Home Assistant resolves a name from
+    ``hasattr(self, "_attr_name")`` first and never reaches the translation
+    key if any class in the chain has set one. Shades represented by a single
+    entity take their name from the device via ``PowerViewCover``; shades that
+    fan out into several entities name each one with a translation key.
+    """
 
     _attr_has_entity_name = True
     _attr_device_class = CoverDeviceClass.SHADE
@@ -77,16 +98,16 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
         coordinator: PVCoordinator,
     ) -> None:
         """Initialize the shade."""
-        LOGGER.debug("%s: init() PowerViewCover", coordinator.name)
-        self._attr_name = None
+        LOGGER.debug("%s: init() %s", coordinator.name, type(self).__name__)
         self._coord: PVCoordinator = coordinator
         self._attr_device_info = self._coord.device_info
-        self._target_position: int | None = round(
-            self._coord.data.get(ATTR_CURRENT_POSITION, OPEN_POSITION)
-        )
         self._attr_unique_id = (
             f"{DOMAIN}_{format_mac(self._coord.address)}_{CoverDeviceClass.SHADE}"
         )
+        # Seeded from the entity's own view of position, so subclasses that
+        # invert or remap the device axis start out consistent with what they
+        # report rather than with the raw reading.
+        self._target_position: int | None = self.current_cover_position
         super().__init__(coordinator)
 
     @property
@@ -134,30 +155,6 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
         """
         return self._fresh_position(ATTR_CURRENT_POSITION)
 
-    async def async_set_cover_position(self, **kwargs: Any) -> None:
-        """Move the cover to a specific position."""
-        target_position: Final = kwargs.get(ATTR_POSITION)
-        if target_position is not None:
-            LOGGER.debug("set cover to position %f", target_position)
-            if self.current_cover_position == round(target_position) and not (
-                self.is_closing or self.is_opening
-            ):
-                return
-            self._target_position = round(target_position)
-            try:
-                await self._coord.api.set_position(
-                    round(target_position),
-                    velocity=self._coord.velocity,
-                )
-                self.async_write_ha_state()
-            except BleakError as err:
-                LOGGER.error(
-                    "Failed to move cover '%s' to %f%%: %s",
-                    self.name,
-                    target_position,
-                    err,
-                )
-
     def _reset_target_position(self) -> None:
         self._target_position = None
 
@@ -168,31 +165,83 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
         pos = self._coord.data.get(key)
         return round(pos) if pos is not None else None
 
-    async def async_open_cover(self, **kwargs: Any) -> None:
-        """Open the cover."""
-        LOGGER.debug("open cover")
-        if self.current_cover_position == OPEN_POSITION:
-            return
+    # --- movement hooks --------------------------------------------------
+    #
+    # Everything that differs between shade types lives in these callbacks,
+    # so the send-and-report body below is written once. They may return
+    # None: this is a passive integration, and a subclass that has to consult
+    # another rail's position can find it simply isn't known yet, in which
+    # case the move is abandoned rather than sent with a guess.
+
+    @callback
+    def _clamp_cover_limit(self, target: int) -> int | None:
+        """Constrain a target so the shade can't be sent somewhere impossible."""
+        return target
+
+    @callback
+    def _get_shade_move(self, target: int) -> ShadeMove | None:
+        """Translate a Home Assistant facing target into a device-facing move."""
+        return ShadeMove(pos1=target)
+
+    @callback
+    def _get_shade_tilt(self, target: int) -> ShadeMove | None:
+        """Translate a Home Assistant facing tilt target into a device move.
+
+        The lift axis has to be restated in every position command, and it is
+        the *device* reading that belongs on the wire -- not this entity's
+        possibly inverted or remapped view of it.
+        """
+        pos1 = self._fresh_position(ATTR_CURRENT_POSITION)
+        return None if pos1 is None else ShadeMove(pos1=pos1, tilt=target)
+
+    async def _async_send_move(self, move: ShadeMove, description: str) -> bool:
+        """Send a move to the shade, returning whether it was accepted."""
+        LOGGER.debug("%s: %s as %s", self.name, description, move)
         try:
-            self._target_position = OPEN_POSITION
-            await self._coord.api.open(velocity=self._coord.velocity)
-            self.async_write_ha_state()
+            await self._coord.api.set_position(
+                move.pos1,
+                move.pos2,
+                move.pos3,
+                move.tilt,
+                velocity=self._coord.velocity,
+                # The shade drops the link itself once it has finished moving.
+                # Holding it open until then is what lets is_opening/is_closing
+                # report movement in between advertisements.
+                disconnect=False,
+            )
         except BleakError as err:
-            LOGGER.error("Failed to open cover '%s': %s", self.name, err)
+            LOGGER.error("Failed to %s for '%s': %s", description, self.name, err)
+            return False
+        self.async_write_ha_state()
+        return True
+
+    async def _async_move_to(self, target: float) -> None:
+        """Move the shade to a Home Assistant facing position."""
+        clamped = self._clamp_cover_limit(round(target))
+        if clamped is None:
+            return
+        if self.current_cover_position == clamped and not (
+            self.is_closing or self.is_opening
+        ):
+            return
+        if (move := self._get_shade_move(clamped)) is None:
+            return
+        self._target_position = clamped
+        if not await self._async_send_move(move, f"move to {clamped}%"):
             self._reset_target_position()
 
+    async def async_set_cover_position(self, **kwargs: Any) -> None:
+        """Move the cover to a specific position."""
+        if (target_position := kwargs.get(ATTR_POSITION)) is not None:
+            await self._async_move_to(target_position)
+
+    async def async_open_cover(self, **kwargs: Any) -> None:
+        """Open the cover."""
+        await self._async_move_to(OPEN_POSITION)
+
     async def async_close_cover(self, **kwargs: Any) -> None:
-        """Close the cover tilt."""
-        LOGGER.debug("close cover")
-        if self.current_cover_position == CLOSED_POSITION:
-            return
-        try:
-            self._target_position = CLOSED_POSITION
-            await self._coord.api.close(velocity=self._coord.velocity)
-            self.async_write_ha_state()
-        except BleakError as err:
-            LOGGER.error("Failed to close cover '%s': %s", self.name, err)
-            self._reset_target_position()
+        """Close the cover."""
+        await self._async_move_to(CLOSED_POSITION)
 
     async def async_stop_cover(self, **kwargs: Any) -> None:
         """Stop the cover."""
@@ -205,8 +254,18 @@ class PowerViewCover(PassiveBluetoothCoordinatorEntity[PVCoordinator], CoverEnti
             LOGGER.error("Failed to stop cover '%s': %s", self.name, err)
 
 
-class PowerViewCoverTilt(PowerViewCover):
-    """Representation of a PowerView shade with additional tilt functionality."""
+class PowerViewCover(PowerViewCoverBase):
+    """A shade represented by one entity, named after its device."""
+
+    _attr_name = None
+
+
+class PowerViewCoverTiltBase(PowerViewCoverBase):
+    """Tilt behaviour, without claiming a name.
+
+    Kept separate from PowerViewCoverTilt so the Duolite combined entity can
+    pick up tilt while still naming itself from its own translation key.
+    """
 
     _attr_supported_features = (
         CoverEntityFeature.OPEN
@@ -219,14 +278,6 @@ class PowerViewCoverTilt(PowerViewCover):
         | CoverEntityFeature.SET_TILT_POSITION
     )
 
-    def __init__(
-        self,
-        coordinator: PVCoordinator,
-    ) -> None:
-        """Initialize the shade with tilt."""
-        LOGGER.debug("%s: init() PowerViewCoverTilt", coordinator.name)
-        super().__init__(coordinator)
-
     @property
     def current_cover_tilt_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
         """Return current tilt of cover.
@@ -237,29 +288,13 @@ class PowerViewCoverTilt(PowerViewCover):
 
     async def async_set_cover_tilt_position(self, **kwargs: Any) -> None:
         """Move the tilt to a specific position."""
-
-        if isinstance(target_position := kwargs.get(ATTR_TILT_POSITION), int):
-            LOGGER.debug("set cover tilt to position %i", target_position)
-            if (
-                self.current_cover_tilt_position == round(target_position)
-                or self.current_cover_position is None
-            ):
-                return
-
-            try:
-                await self._coord.api.set_position(
-                    self.current_cover_position,
-                    tilt=target_position,
-                    velocity=self._coord.velocity,
-                )
-                self.async_write_ha_state()
-            except BleakError as err:
-                LOGGER.error(
-                    "Failed to tilt cover '%s' to %f%%: %s",
-                    self.name,
-                    target_position,
-                    err,
-                )
+        if not isinstance(target_position := kwargs.get(ATTR_TILT_POSITION), int):
+            return
+        if self.current_cover_tilt_position == target_position:
+            return
+        if (move := self._get_shade_tilt(target_position)) is None:
+            return
+        await self._async_send_move(move, f"tilt to {target_position}%")
 
     async def async_stop_cover_tilt(self, **kwargs: Any) -> None:
         """Stop the cover."""
@@ -267,124 +302,43 @@ class PowerViewCoverTilt(PowerViewCover):
 
     async def async_open_cover_tilt(self, **kwargs: Any) -> None:
         """Open the cover tilt."""
-        LOGGER.debug("open cover tilt")
-        _kwargs = {**kwargs, ATTR_TILT_POSITION: OPEN_POSITION}
-        await self.async_set_cover_tilt_position(**_kwargs)
+        await self.async_set_cover_tilt_position(
+            **{**kwargs, ATTR_TILT_POSITION: OPEN_POSITION}
+        )
 
     async def async_close_cover_tilt(self, **kwargs: Any) -> None:
         """Close the cover tilt."""
-        LOGGER.debug("close cover tilt")
-        _kwargs = {**kwargs, ATTR_TILT_POSITION: CLOSED_POSITION}
-        await self.async_set_cover_tilt_position(**_kwargs)
+        await self.async_set_cover_tilt_position(
+            **{**kwargs, ATTR_TILT_POSITION: CLOSED_POSITION}
+        )
+
+
+class PowerViewCoverTilt(PowerViewCoverTiltBase):
+    """Representation of a PowerView shade with additional tilt functionality."""
+
+    _attr_name = None
 
 
 class PowerViewCoverTiltOnClosed(PowerViewCoverTilt):
     """Representation of a PowerView shade whose tilt is only available when closed.
 
-    Examples: Bottom Up 90° (type 18), Twist (type 44).
+    Examples: Pirouette (type 18), Twist (type 44).
 
     If a tilt command arrives while the shade is open, the shade is closed first
     so the tilt mechanism is engaged before the command is sent.
     """
 
-    def __init__(self, coordinator: PVCoordinator) -> None:
-        """Initialize the shade."""
-        LOGGER.debug("%s: init() PowerViewCoverTiltOnClosed", coordinator.name)
-        super().__init__(coordinator)
-
     async def async_set_cover_tilt_position(self, **kwargs: Any) -> None:
         """Move the tilt to a specific position, closing first if needed."""
         if self.current_cover_position != CLOSED_POSITION:
             LOGGER.debug("tilt-on-closed: closing shade before tilting")
-            try:
-                self._target_position = CLOSED_POSITION
-                await self._coord.api.close(velocity=self._coord.velocity)
-                self.async_write_ha_state()
-            except BleakError as err:
-                LOGGER.error(
-                    "Failed to close cover '%s' before tilt: %s", self.name, err
-                )
-                self._reset_target_position()
+            await self._async_move_to(CLOSED_POSITION)
             return
         await super().async_set_cover_tilt_position(**kwargs)
 
 
-class PowerViewCoverTopDown(PowerViewCover):
-    """Representation of a top-down PowerView shade.
-
-    The device position axis is inverted: device 0 = open (fabric retracted),
-    device 100 = closed (fabric fully extended). We translate at the boundary
-    so HA's standard 0=closed / 100=open convention is preserved.
-    """
-
-    @property
-    def current_cover_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
-        """Return current position, inverting the device axis."""
-        pos = self._fresh_position(ATTR_CURRENT_POSITION)
-        return OPEN_POSITION - pos if pos is not None else None
-
-    async def async_set_cover_position(self, **kwargs: Any) -> None:
-        """Move the cover to a specific position, inverting for the device."""
-        target_position: Final = kwargs.get(ATTR_POSITION)
-        if target_position is not None:
-            inverted = OPEN_POSITION - round(target_position)
-            LOGGER.debug(
-                "set top-down cover to position %f (device %i)",
-                target_position,
-                inverted,
-            )
-            if self.current_cover_position == round(target_position) and not (
-                self.is_closing or self.is_opening
-            ):
-                return
-            self._target_position = round(target_position)
-            try:
-                await self._coord.api.set_position(
-                    inverted,
-                    velocity=self._coord.velocity,
-                )
-                self.async_write_ha_state()
-            except BleakError as err:
-                LOGGER.error(
-                    "Failed to move cover '%s' to %f%%: %s",
-                    self.name,
-                    target_position,
-                    err,
-                )
-
-    async def async_open_cover(self, **kwargs: Any) -> None:
-        """Open the cover (send device position 0)."""
-        LOGGER.debug("open top-down cover")
-        if self.current_cover_position == OPEN_POSITION:
-            return
-        try:
-            self._target_position = OPEN_POSITION
-            await self._coord.api.set_position(
-                CLOSED_POSITION, velocity=self._coord.velocity
-            )
-            self.async_write_ha_state()
-        except BleakError as err:
-            LOGGER.error("Failed to open cover '%s': %s", self.name, err)
-            self._reset_target_position()
-
-    async def async_close_cover(self, **kwargs: Any) -> None:
-        """Close the cover (send device position 100)."""
-        LOGGER.debug("close top-down cover")
-        if self.current_cover_position == CLOSED_POSITION:
-            return
-        try:
-            self._target_position = CLOSED_POSITION
-            await self._coord.api.set_position(
-                OPEN_POSITION, velocity=self._coord.velocity
-            )
-            self.async_write_ha_state()
-        except BleakError as err:
-            LOGGER.error("Failed to close cover '%s': %s", self.name, err)
-            self._reset_target_position()
-
-
 class PowerViewCoverTiltOnly(PowerViewCoverTilt):
-    """Representation of a PowerView shade with additional tilt functionality."""
+    """Representation of a PowerView shade with tilt and no lift."""
 
     OPENCLOSED_THRESHOLD = 5
 
@@ -395,14 +349,6 @@ class PowerViewCoverTiltOnly(PowerViewCoverTilt):
         | CoverEntityFeature.STOP_TILT
         | CoverEntityFeature.SET_TILT_POSITION
     )
-
-    def __init__(
-        self,
-        coordinator: PVCoordinator,
-    ) -> None:
-        """Initialize the shade with tilt only."""
-        LOGGER.debug("%s: init() PowerViewCoverTiltOnly", coordinator.name)
-        super().__init__(coordinator)
 
     @property
     def is_opening(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
@@ -425,7 +371,27 @@ class PowerViewCoverTiltOnly(PowerViewCoverTilt):
         )
 
 
-class PowerViewCoverTDBUBottom(PowerViewCover):
+class PowerViewCoverTopDown(PowerViewCover):
+    """Representation of a top-down PowerView shade.
+
+    The device position axis is inverted: device 0 = open (fabric retracted),
+    device 100 = closed (fabric fully extended). We translate at the boundary
+    so HA's standard 0=closed / 100=open convention is preserved.
+    """
+
+    @property
+    def current_cover_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return current position, inverting the device axis."""
+        pos = self._fresh_position(ATTR_CURRENT_POSITION)
+        return OPEN_POSITION - pos if pos is not None else None
+
+    @callback
+    def _get_shade_move(self, target: int) -> ShadeMove | None:
+        """Invert the target back into the device's own axis."""
+        return ShadeMove(pos1=OPEN_POSITION - target)
+
+
+class PowerViewCoverTDBUBottom(PowerViewCoverBase):
     """Rail driven by position1/primary of a dual-rail Top-Down/Bottom-Up shade.
 
     The official Hunter Douglas PowerView integration in home-assistant/core
@@ -444,11 +410,11 @@ class PowerViewCoverTDBUBottom(PowerViewCover):
     HA's standard 0=closed/100=open is preserved, same as PowerViewCoverTopDown.
     """
 
+    _attr_translation_key = "top_rail"
+
     def __init__(self, coordinator: PVCoordinator) -> None:
         """Initialize the rail."""
-        LOGGER.debug("%s: init() PowerViewCoverTDBUBottom", coordinator.name)
         super().__init__(coordinator)
-        self._attr_name = "Top rail"
         self._attr_unique_id = f"{self._attr_unique_id}_bottom"
 
     @property
@@ -457,57 +423,25 @@ class PowerViewCoverTDBUBottom(PowerViewCover):
         pos = self._fresh_position(ATTR_CURRENT_POSITION)
         return OPEN_POSITION - pos if pos is not None else None
 
-    async def async_set_cover_position(self, **kwargs: Any) -> None:
-        """Move the rail, inverting for the device, clamped against the other rail.
+    @callback
+    def _clamp_cover_limit(self, target: int) -> int | None:
+        """Stop the top rail being pulled down past the bottom rail.
 
-        The top rail can't be pulled down past the bottom rail's current
-        position -- that's a LOWER bound on the top rail (target >= bottom),
-        not an upper bound. (Previously coded as min(target, 100-bottom),
-        which is the wrong operator and was the cause of the top rail
-        appearing "locked" once it reached 100-bottom.)
+        That is a LOWER bound on the top rail (target >= bottom), not an upper
+        bound. (Previously coded as min(target, 100-bottom), which is the wrong
+        operator and was the cause of the top rail appearing "locked" once it
+        reached 100-bottom.)
         """
-        target_position: Final = kwargs.get(ATTR_POSITION)
-        if target_position is None:
-            return
         bottom_position = self._fresh_position("position2")
-        if bottom_position is None:
-            return
-        clamped = max(round(target_position), bottom_position)
-        inverted = OPEN_POSITION - clamped
-        LOGGER.debug(
-            "set top-rail cover to position %f (device %i)", target_position, inverted
-        )
-        if self.current_cover_position == clamped and not (
-            self.is_closing or self.is_opening
-        ):
-            return
-        self._target_position = clamped
-        try:
-            await self._coord.api.set_position(
-                inverted,
-                velocity=self._coord.velocity,
-            )
-            self.async_write_ha_state()
-        except BleakError as err:
-            LOGGER.error(
-                "Failed to move top-rail cover '%s' to %f%%: %s",
-                self.name,
-                target_position,
-                err,
-            )
+        return None if bottom_position is None else max(target, bottom_position)
 
-    async def async_open_cover(self, **kwargs: Any) -> None:
-        """Open the rail (send device position 0), clamped against the other rail."""
-        LOGGER.debug("open top-rail cover")
-        await self.async_set_cover_position(**{ATTR_POSITION: OPEN_POSITION})
-
-    async def async_close_cover(self, **kwargs: Any) -> None:
-        """Close the rail (send device position 100)."""
-        LOGGER.debug("close top-rail cover")
-        await self.async_set_cover_position(**{ATTR_POSITION: CLOSED_POSITION})
+    @callback
+    def _get_shade_move(self, target: int) -> ShadeMove | None:
+        """Invert the target back into the device's own axis."""
+        return ShadeMove(pos1=OPEN_POSITION - target)
 
 
-class PowerViewCoverTDBUTop(PowerViewCover):
+class PowerViewCoverTDBUTop(PowerViewCoverBase):
     """Rail driven by position2/secondary of a dual-rail Top-Down/Bottom-Up shade.
 
     TDBU shades (type 8/9/33/47) have two independently-movable rails, but
@@ -522,62 +456,142 @@ class PowerViewCoverTDBUTop(PowerViewCover):
     trusting a jump to 0 or 100.
     """
 
+    _attr_translation_key = "bottom_rail"
+
     def __init__(self, coordinator: PVCoordinator) -> None:
         """Initialize the rail."""
-        LOGGER.debug("%s: init() PowerViewCoverTDBUTop", coordinator.name)
         super().__init__(coordinator)
-        self._attr_name = "Bottom rail"
         self._attr_unique_id = f"{self._attr_unique_id}_top"
-        self._target_position = self._fresh_position("position2") or OPEN_POSITION
 
     @property
     def current_cover_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
         """Return current position of the bottom rail."""
         return self._fresh_position("position2")
 
-    async def async_set_cover_position(self, **kwargs: Any) -> None:
-        """Move the bottom rail, clamped so it can't pass through the top rail.
+    @callback
+    def _clamp_cover_limit(self, target: int) -> int | None:
+        """Stop the bottom rail rising past the top rail.
 
-        The bottom rail can't rise past the top rail's current position --
-        an UPPER bound (target <= top). PowerViewCoverTDBUBottom (the "Top
+        An UPPER bound (target <= top). PowerViewCoverTDBUBottom (the "Top
         rail" entity) inverts position1 to get its own HA-facing position
         (top_ha = 100 - raw_pos1), so this clamps against 100 - raw_pos1,
         not the raw reading directly.
         """
-        target_position: Final = kwargs.get(ATTR_POSITION)
-        if target_position is None:
-            return
         top_rail_raw = self._fresh_position(ATTR_CURRENT_POSITION)
         if top_rail_raw is None:
-            return
-        clamped_target = min(round(target_position), OPEN_POSITION - top_rail_raw)
-        LOGGER.debug("set bottom-rail cover to position %f", target_position)
-        if self.current_cover_position == clamped_target and not (
-            self.is_closing or self.is_opening
-        ):
-            return
-        self._target_position = clamped_target
-        try:
-            await self._coord.api.set_position(
-                top_rail_raw,
-                pos2=clamped_target,
-                velocity=self._coord.velocity,
-            )
-            self.async_write_ha_state()
-        except BleakError as err:
-            LOGGER.error(
-                "Failed to move bottom-rail cover '%s' to %f%%: %s",
-                self.name,
-                target_position,
-                err,
-            )
+            return None
+        return min(target, OPEN_POSITION - top_rail_raw)
 
-    async def async_open_cover(self, **kwargs: Any) -> None:
-        """Open the bottom rail, clamped against the top rail."""
-        LOGGER.debug("open bottom-rail cover")
-        await self.async_set_cover_position(**{ATTR_POSITION: OPEN_POSITION})
+    @callback
+    def _get_shade_move(self, target: int) -> ShadeMove | None:
+        """Restate the top rail unchanged and drive position2 to the target."""
+        top_rail_raw = self._fresh_position(ATTR_CURRENT_POSITION)
+        if top_rail_raw is None:
+            return None
+        return ShadeMove(pos1=top_rail_raw, pos2=target)
 
-    async def async_close_cover(self, **kwargs: Any) -> None:
-        """Close the bottom rail."""
-        LOGGER.debug("close bottom-rail cover")
-        await self.async_set_cover_position(**{ATTR_POSITION: CLOSED_POSITION})
+
+class PowerViewCoverDuoliteBase(PowerViewCoverBase):
+    """Shared plumbing for dual-fabric (Duolite) shades.
+
+    EXPERIMENTAL -- see the Duolite section of the README. One motor drives a
+    front sheer and a rear opaque fabric. The mapping used here mirrors the
+    official hunterdouglas_powerview integration, where the front sheer is the
+    primary position and the rear opaque is the secondary; over BLE those are
+    position1 and position2. That correspondence is carried over from the hub
+    API, not confirmed against a Duolite shade, so please open an issue with a
+    diagnostics download if these entities misbehave.
+    """
+
+    @property
+    def _front_position(self) -> int | None:
+        """Return the front sheer fabric's device position."""
+        return self._fresh_position(ATTR_CURRENT_POSITION)
+
+    @property
+    def _rear_position(self) -> int | None:
+        """Return the rear opaque fabric's device position."""
+        return self._fresh_position("position2")
+
+
+class PowerViewCoverDuoliteCombined(PowerViewCoverDuoliteBase):
+    """Both Duolite fabrics presented as one cover on a single 0-100 scale.
+
+    Below the midpoint the rear opaque fabric moves across its full travel;
+    above it the front sheer does. This is the entity most users will want.
+    """
+
+    _attr_translation_key = "combined"
+
+    def __init__(self, coordinator: PVCoordinator) -> None:
+        """Initialize the combined fabric entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{self._attr_unique_id}_combined"
+
+    @property
+    def current_cover_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Fold both fabric positions onto one scale."""
+        front, rear = self._front_position, self._rear_position
+        if front is None or rear is None:
+            return None
+        if front == CLOSED_POSITION:
+            return ceil(rear / 2)
+        return ceil(front / 2) + DUOLITE_MIDPOINT
+
+    @property
+    def is_closed(self) -> bool:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return if the cover is closed; the rear opaque fabric decides."""
+        return self._rear_position == CLOSED_POSITION
+
+    @callback
+    def _get_shade_move(self, target: int) -> ShadeMove | None:
+        """Drive whichever fabric owns this half of the scale."""
+        if target > DUOLITE_MIDPOINT:
+            return ShadeMove(pos1=(target - DUOLITE_MIDPOINT) * 2)
+        # Only the rear moves, but the lift axis still has to be restated.
+        front = self._front_position
+        return None if front is None else ShadeMove(pos1=front, pos2=target * 2)
+
+
+class PowerViewCoverDuoliteCombinedTilt(
+    PowerViewCoverTiltBase, PowerViewCoverDuoliteCombined
+):
+    """Combined Duolite entity for a shade whose front fabric also tilts.
+
+    Type 38 (Silhouette Duolite) only. Tilt applies to the front sheer, which
+    is the position1 axis the inherited tilt hook already restates. The tilt
+    base comes first so its supported features win over the lift-only set.
+    """
+
+
+class PowerViewCoverDuoliteFront(PowerViewCoverDuoliteBase):
+    """The front sheer fabric of a Duolite shade on its own."""
+
+    _attr_translation_key = "front"
+
+    def __init__(self, coordinator: PVCoordinator) -> None:
+        """Initialize the front fabric entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{self._attr_unique_id}_front"
+
+
+class PowerViewCoverDuoliteRear(PowerViewCoverDuoliteBase):
+    """The rear opaque fabric of a Duolite shade on its own."""
+
+    _attr_translation_key = "rear"
+
+    def __init__(self, coordinator: PVCoordinator) -> None:
+        """Initialize the rear fabric entity."""
+        super().__init__(coordinator)
+        self._attr_unique_id = f"{self._attr_unique_id}_rear"
+
+    @property
+    def current_cover_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return the rear fabric's position."""
+        return self._rear_position
+
+    @callback
+    def _get_shade_move(self, target: int) -> ShadeMove | None:
+        """Restate the front fabric unchanged and drive position2."""
+        front = self._front_position
+        return None if front is None else ShadeMove(pos1=front, pos2=target)
