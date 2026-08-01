@@ -1,20 +1,30 @@
 #!/usr/bin/env python3
 """Probe the payload layout of 0xFF77, "set shade time".
 
-Sending 0xFF77 with the 7-byte payload the emulator documents (year LE
-uint16, month, day, hour, minute, second) gets status 0x04 back from a
-hardwired Duette on fw_rev=22 -- "invalid length", per PV_ERROR_CODES in
-shade_report.py.
+The emulator documents a 7-byte payload (year LE uint16, month, day,
+hour, minute, second) and its 0xFF77 branch acks whatever arrives without
+ever checking msg.data_len -- so an incomplete layout was invisible to
+whoever wrote it.  Real firmware validates.
 
-The opcode itself is right: the shade echoes 0x77EF with a matching
-sequence number and a well-formed 1-byte status, exactly as a successful
-0x01F7 does, rather than failing to parse the request.  So it is the
-payload that is wrong, and the emulator would never have caught that --
-its 0xFF77 branch reads indices 4..10 and acks whatever arrives without
-ever checking msg.data_len.
+Phase 1 (default) sweeps payload lengths and a few structural variants.
+Against a hardwired Duette on fw_rev=22 it found:
 
-This sweeps candidate payloads and prints the status byte for each, to
-find the shape the firmware actually accepts.
+    length != 8                     -> 0x04, invalid length
+    length 8, trailing byte 0x00    -> 0x80, length accepted, value refused
+    length 8, trailing byte 0x06    -> 0x00, accepted
+
+So the payload is 8 bytes: the emulator's 7 plus a trailing day-of-week,
+and the firmware validates length before content.
+
+Phase 2 (--dow-sweep) pins down what that trailing byte means, which
+phase 1 cannot: the run above was on a Sunday, where Python's weekday()
+returns 6, and two readings both fit.  Either the field is Mon=0..Sun=6
+and the shade cross-checks it against the date (so only one value is ever
+valid for a given day), or it is a 1..7 range checked only for bounds (so
+6 was accepted merely for being in range, and would have stored the wrong
+weekday).  Sweeping the byte across 0..15 on a known date separates them:
+exactly one acceptance means a cross-check, a contiguous run means a
+bounds check.
 
 UNLIKE shade_report.py, THIS SCRIPT WRITES.  It sends exactly one opcode,
 0xFF77, and nothing else -- no move, no scene, no rekey, no power-type
@@ -24,6 +34,7 @@ probe finishes by writing the correct time.
 
 Usage:
     python -m scripts.probe_set_time --ble-name DUE:7C82
+    python -m scripts.probe_set_time --ble-name DUE:7C82 --dow-sweep
 """
 
 from __future__ import annotations
@@ -53,11 +64,13 @@ from scripts.shade_report import (
 # stores the byte-swapped 0x77FF and packs little-endian to the same wire).
 CMD_SET_TIME = 0xFF77
 
-# Reply status byte.  0x04 is the only non-zero code observed so far; see
-# PV_ERROR_CODES in shade_report.py.
+# Reply status byte; see PV_ERROR_CODES in shade_report.py.  0x80 appears
+# only at the correct length with a refused field value, so the firmware
+# checks length first and content second.
 STATUS_LABELS: dict[int, str] = {
     0x00: "OK",
     0x04: "invalid length",
+    0x80: "invalid value",
 }
 
 MAX_PAYLOAD = 16
@@ -98,6 +111,25 @@ def _candidates(now: datetime) -> list[tuple[str, bytes]]:
         ("var  dow first", bytes([dow_sun0]) + core),
     ]
     return out
+
+
+def _dow_candidates(now: datetime) -> list[tuple[str, bytes]]:
+    """Return one 8-byte payload per candidate day-of-week code.
+
+    Everything but the trailing byte is held at the real current time, so
+    the only variable is the weekday code.  Read the result as:
+
+      exactly one acceptance -> the shade cross-checks the code against
+        the date, and the accepted value *is* this date's code
+      a contiguous run       -> the shade only bounds-checks, so an
+        in-range code can still store the wrong weekday
+    """
+    core = int.to_bytes(now.year, 2, "little") + bytes(
+        [now.month, now.day, now.hour, now.minute, now.second]
+    )
+    return [
+        (f"dow {code:>2} (0x{code:02X})", core + bytes([code])) for code in range(16)
+    ]
 
 
 def _describe(reply: bytes) -> tuple[int | None, str]:
@@ -148,7 +180,38 @@ async def _sweep(
     return accepted
 
 
-async def _probe(ble_name: str, hub: str, scan_timeout: float) -> int:
+def _interpret_dow(now: datetime, accepted: list[tuple[int, str, bytes]]) -> None:
+    """Explain what a day-of-week sweep result implies about the field."""
+    codes = [payload[-1] for _, _, payload in accepted]
+    weekday = now.strftime("%A")
+    if len(codes) == 1:
+        code = codes[0]
+        offset = (code - now.weekday()) % 7
+        scheme = (
+            "Python's weekday() exactly (Mon=0..Sun=6)"
+            if offset == 0
+            else f"weekday() shifted by +{offset} (Mon={offset % 7})"
+        )
+        print(
+            f"Exactly one code accepted, so the shade cross-checks the "
+            f"weekday against the date.\n"
+            f"  {now:%Y-%m-%d} is a {weekday}; the shade wants 0x{code:02X} "
+            f"({code}).\n"
+            f"  That matches {scheme}."
+        )
+        return
+    print(
+        f"{len(codes)} codes accepted ({', '.join(str(c) for c in codes)}), so "
+        f"the shade only bounds-checks this byte.\n"
+        f"  It does NOT verify the weekday against the date, which means a "
+        f"wrong-but-in-range\n"
+        f"  value is stored silently. The correct code for {weekday} cannot be "
+        f"read off this run\n"
+        f"  alone -- re-run on a different weekday, or capture the vendor app."
+    )
+
+
+async def _probe(ble_name: str, hub: str, scan_timeout: float, dow_sweep: bool) -> int:
     home_key = _fetch_home_key(hub)
     if home_key is None:
         return 1
@@ -160,8 +223,9 @@ async def _probe(ble_name: str, hub: str, scan_timeout: float) -> int:
         print(f"  {ble_name} not seen on air. Aborting.")
         return 1
 
+    build = _dow_candidates if dow_sweep else _candidates
     now = datetime.now().replace(microsecond=0)
-    candidates = _candidates(now)
+    candidates = build(now)
     print(
         f"\nProbing {ble_name} with 0xFF77, reference time "
         f"{now:%Y-%m-%d %H:%M:%S} ({len(candidates)} candidates)\n"
@@ -184,6 +248,9 @@ async def _probe(ble_name: str, hub: str, scan_timeout: float) -> int:
         print(f"{len(accepted)} candidate(s) accepted:")
         for _, label, payload in accepted:
             print(f"  {label}: {payload.hex(' ')}")
+        if dow_sweep:
+            print()
+            _interpret_dow(now, accepted)
 
         # The sweep set the clock to whatever the winning candidate carried,
         # which is now a little stale. Regenerate the same candidate from a
@@ -191,7 +258,7 @@ async def _probe(ble_name: str, hub: str, scan_timeout: float) -> int:
         # that candidate puts its fields -- and send it once more.
         idx, label, _ = accepted[0]
         final = datetime.now().replace(microsecond=0)
-        payload = _candidates(final)[idx][1]
+        payload = build(final)[idx][1]
         code, note = _describe(await api.query(CMD_SET_TIME, payload))
         stamp = f"{final:%Y-%m-%d %H:%M:%S}"
         result = f"0x{code:02X} {note}" if code is not None else note
@@ -216,8 +283,18 @@ def main() -> int:
         default=SCAN_TIMEOUT,
         help=f"BLE scan timeout in seconds (default: {SCAN_TIMEOUT})",
     )
+    parser.add_argument(
+        "--dow-sweep",
+        action="store_true",
+        help=(
+            "Phase 2: hold the time fixed and sweep the trailing "
+            "day-of-week byte across 0-15"
+        ),
+    )
     args = parser.parse_args()
-    return asyncio.run(_probe(args.ble_name, args.hub, args.scan_timeout))
+    return asyncio.run(
+        _probe(args.ble_name, args.hub, args.scan_timeout, args.dow_sweep)
+    )
 
 
 if __name__ == "__main__":

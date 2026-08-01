@@ -523,8 +523,13 @@ class PowerViewBLE:
         if self._is_encrypted and self._cipher is None:
             return  # would put plaintext on the wire; the shade would ignore it
         now = dt_util.now()
+        # 8 bytes: year LE uint16, month, day, hour, minute, second, weekday.
+        # The emulator documents only the first seven and never validates the
+        # length, so the missing field went unnoticed there; fw_rev=22 rejects
+        # every other length with status 0x04. Monday=0, matching weekday();
+        # a weekday byte the shade will not take comes back as 0x80.
         payload: Final[bytes] = int.to_bytes(now.year, 2, byteorder="little") + bytes(
-            [now.month, now.day, now.hour, now.minute, now.second]
+            [now.month, now.day, now.hour, now.minute, now.second, now.weekday()]
         )
         try:
             seq = await self._transact((ShadeCmd.SET_TIME, payload))
