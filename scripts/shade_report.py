@@ -160,8 +160,14 @@ POWER_LEVELS = {3: 100, 2: 50, 1: 20, 0: 0}
 # PowerView BLE error-response shape (see api.py _verify_response): when a
 # query's response has data_len=1, byte 4 is an error code rather than real
 # payload.  Expand this dict as users report codes from different firmwares.
+# 0x04 was inferred from a rejected 0xFFDE and then confirmed against
+# 0xFF77 (set time), which returns it for every payload length but the
+# correct one.  0x80 came from the same probe: it appears only at the
+# correct length carrying a field value the shade will not take, so the
+# firmware validates length first and content second.
 PV_ERROR_CODES: dict[int, str] = {
-    0x04: "invalid length (hypothesis)",
+    0x04: "invalid length",
+    0x80: "invalid field value",
 }
 
 # 0xFFDE byte 1 — power type (byte 0 is the reply's status code, not the power

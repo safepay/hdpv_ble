@@ -21,6 +21,7 @@ from homeassistant.components.cover import (
     ATTR_CURRENT_POSITION,
     ATTR_CURRENT_TILT_POSITION,
 )
+from homeassistant.util import dt as dt_util
 
 from .const import LOGGER, TIMEOUT
 
@@ -191,6 +192,10 @@ class ShadeCmd(Enum):
     ACTIVATE_SCENE = 0xBAF7
     IDENTIFY = 0x11F7
     POWER_STATUS = 0xDEFF
+    # Values are the emulator's `(serviceID << 8) | cmdID` constants
+    # byte-swapped, because _transact writes them little-endian: the
+    # emulator's 0xFF77 "set shade time" is 0x77FF here.
+    SET_TIME = 0x77FF
 
 
 @dataclass
@@ -209,6 +214,11 @@ class PVDeviceInfo:
 class PowerViewBLE:
     """Class to handle connection to PowerView remote device."""
 
+    # A G3 gateway refreshes every shade's clock at least daily. Match that,
+    # so a clock drifting slowly without ever raising `reset_clock` still
+    # gets corrected -- on an install with no gateway nothing else would.
+    _CLOCK_REFRESH_S: Final[float] = 24 * 3600
+
     def __init__(self, ble_device: BLEDevice, home_key: bytes = b"") -> None:
         """Initialize device API via Bluetooth."""
         self._ble_device: BLEDevice = ble_device
@@ -219,6 +229,12 @@ class PowerViewBLE:
         self._data: bytes = b""
         self._info: PVDeviceInfo = PVDeviceInfo()
         self._is_encrypted: bool = False
+        # None until an advertisement has been decoded. Unknown counts as
+        # "needs setting": a shade we cannot currently hear may have
+        # rebooted unseen, and a redundant push is cheaper than a shade
+        # sitting with a dead clock because we assumed the best.
+        self._clock_reset: bool | None = None
+        self._last_time_set: float = 0.0
         self._cmd_lock: Final = asyncio.Lock()
         self._cmd_next: tuple[ShadeCmd, bytes]
         self._cipher: Final[Cipher | None] = (
@@ -243,6 +259,15 @@ class PowerViewBLE:
     @encrypted.setter
     def encrypted(self, value: bool) -> None:
         self._is_encrypted = value
+
+    @property
+    def clock_reset(self) -> bool | None:
+        """Return whether the shade last advertised a lost clock, or None."""
+        return self._clock_reset
+
+    @clock_reset.setter
+    def clock_reset(self, value: bool) -> None:
+        self._clock_reset = value
 
     @property
     def has_key(self) -> bool:
@@ -501,6 +526,95 @@ class PowerViewBLE:
 
         self._data_event.set()
 
+    def _clock_due(self) -> bool:
+        """Return whether this connection should carry a clock update.
+
+        The shade raises `reset_clock` when it has lost the time, so an
+        advertisement saying otherwise means there is nothing urgent to do
+        and the connection can get on with the command it was opened for.
+
+        A clock that merely drifts never raises that flag, though, so the
+        flag alone is not enough: fall back to a daily refresh, which is
+        what a G3 gateway does and what an install without one would
+        otherwise never get.
+        """
+        if self._clock_reset is not False:
+            return True  # asked for it, or no advertisement decoded yet
+        if self._last_time_set == 0.0:
+            return True  # nothing set this session, so establish a baseline
+        return time.monotonic() - self._last_time_set >= self._CLOCK_REFRESH_S
+
+    async def _set_time(self) -> None:
+        """Push the current local time to the shade. Best effort, never raises.
+
+        A shade that loses power stops its clock and comes back not knowing
+        the time, so its stored schedules stay dormant until something tells
+        it -- it advertises this as the `reset_clock` flag. Hunter Douglas
+        say the vendor app pushes the time when it next connects and a G3
+        gateway does so at least daily, which is what "operate the shade once
+        from the app" was really fixing. See _clock_due for when we send.
+
+        Failure is not the caller's problem: this is an unsolicited extra, so
+        it must never take down the command the caller actually asked for.
+        """
+        if self._is_encrypted and self._cipher is None:
+            return  # would put plaintext on the wire; the shade would ignore it
+        if not self._clock_due():
+            LOGGER.debug("%s: clock still current, not resending", self.name)
+            return
+        now = dt_util.now()
+        # 8 bytes: year LE uint16, month, day, hour, minute, second, weekday.
+        # The emulator documents only the first seven and never validates the
+        # length, so the missing field went unnoticed there; fw_rev=22 rejects
+        # every other length with status 0x04.
+        #
+        # The weekday is ISO 8601, Monday=1..Sunday=7 -- isoweekday(), not
+        # weekday(). Sweeping the byte 0-15 got 1-7 accepted and everything
+        # else refused with 0x80, so the shade bounds-checks it and never
+        # derives it from the date; weekday() is 0 on Mondays and would have
+        # been refused one day in seven. Monday=1 was then read off shades
+        # whose clocks only the G3 gateway had ever set, with the
+        # integration stopped: accurate to the second, and 7 on a Sunday.
+        payload: Final[bytes] = int.to_bytes(now.year, 2, byteorder="little") + bytes(
+            [now.month, now.day, now.hour, now.minute, now.second, now.isoweekday()]
+        )
+        try:
+            seq = await self._transact((ShadeCmd.SET_TIME, payload))
+        except (BleakError, TimeoutError) as ex:
+            LOGGER.debug("%s: clock update failed: %s", self.name, ex)
+            return
+        # Validated inline rather than via _verify_ack_reply, which logs at
+        # error level -- a shade that rejects this must not fill the log on
+        # every connect.
+        ack: Final[bytes] = int.to_bytes(
+            ShadeCmd.SET_TIME.value & 0xFFEF, 2, byteorder="little"
+        )
+        if not (
+            len(self._data) > 4 and self._data[0:2] == ack and self._data[2] == seq
+        ):
+            LOGGER.debug(
+                "%s: unrecognised reply to clock update: %s",
+                self.name,
+                self._data.hex(" "),
+            )
+            return
+        status: Final[int] = self._data[4]
+        if status:
+            # 0x04 is "invalid length", 0x80 "invalid field value" -- see
+            # PV_ERROR_CODES in scripts/shade_report.py. Neither is expected
+            # from the payload above, so a shade answering this way is on
+            # firmware wanting a different shape and is worth a bug report.
+            LOGGER.debug(
+                "%s: shade rejected the clock update, status 0x%02X", self.name, status
+            )
+            return
+        # Track the successful push only. Clearing the cached flag too keeps
+        # a reconnect that lands before the next advertisement from sending
+        # a second update it does not need.
+        self._last_time_set = time.monotonic()
+        self._clock_reset = False
+        LOGGER.debug("%s: clock set to %s", self.name, now.isoformat())
+
     async def _connect(self) -> None:
         """Connect to the device and setup notification if not connected."""
 
@@ -525,6 +639,10 @@ class PowerViewBLE:
         await self._client.start_notify(UUID_TX, self._notification_handler)
 
         LOGGER.debug("\tconnect took %is", time.time() - start)
+
+        # Only on a fresh connection -- the early return above means a shade
+        # that is already connected does not get a second push.
+        await self._set_time()
 
     async def disconnect(self) -> None:
         """Disconnect the device and stop notifications."""
