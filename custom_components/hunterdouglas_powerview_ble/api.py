@@ -236,7 +236,10 @@ class PowerViewBLE:
         self._clock_reset: bool | None = None
         self._last_time_set: float = 0.0
         self._cmd_lock: Final = asyncio.Lock()
-        self._cmd_next: tuple[ShadeCmd, bytes]
+        # The pending command and the disconnect behaviour it wants. The two
+        # travel together because the coroutine that ends up sending a
+        # command is often not the caller that asked for it.
+        self._cmd_next: tuple[tuple[ShadeCmd, bytes], bool]
         self._cipher: Final[Cipher | None] = (
             Cipher(algorithms.AES(home_key), modes.CTR(bytes(16)))
             if len(home_key) == 16
@@ -308,26 +311,52 @@ class PowerViewBLE:
 
     # general cmd: uint16_t cmd, uint8_t seqID, uint8_t data_len
     async def _cmd(self, cmd: tuple[ShadeCmd, bytes], disconnect: bool = True) -> None:
-        self._cmd_next = cmd
+        # Commands coalesce rather than queue: one arriving while another is
+        # in flight replaces the pending one, so dragging a slider does not
+        # put every intermediate position on the wire.
+        self._cmd_next = (cmd, disconnect)
         if self._cmd_lock.locked():
             LOGGER.debug("%s: device busy, queuing %s command", self.name, cmd[0])
             return
 
-        async with self._cmd_lock:
-            try:
-                await self._connect()
-                cmd_run: tuple[ShadeCmd, bytes] = self._cmd_next
+        # Whoever holds the lock owns whatever ends up in _cmd_next, so keep
+        # going until nothing new has arrived. Reading it once was not
+        # enough: anything landing after that read was stored and then
+        # silently never sent, and the window is not small -- it spans the
+        # transact and, for a command that disconnects, the seconds that
+        # takes.
+        pending: tuple[tuple[ShadeCmd, bytes], bool] = self._cmd_next
+        while True:
+            async with self._cmd_lock:
                 try:
-                    seq = await self._transact(cmd_run)
-                    self._verify_ack_reply(self._data, seq, cmd_run[0])
-                except TimeoutError as ex:
-                    raise TimeoutError("Device did not send confirmation.") from ex
-                finally:
-                    if disconnect:
-                        await self._client.disconnect()  # device disconnects itself
-            except Exception as ex:
-                LOGGER.error("Error: %s - %s", type(ex).__name__, ex)
-                raise
+                    await self._connect()
+                    # Read after connecting, so a command arriving while the
+                    # link is coming up still replaces this one instead of
+                    # being sent after it.
+                    pending = self._cmd_next
+                    cmd_run, disconnect_run = pending
+                    try:
+                        seq = await self._transact(cmd_run)
+                        self._verify_ack_reply(self._data, seq, cmd_run[0])
+                    except TimeoutError as ex:
+                        raise TimeoutError("Device did not send confirmation.") from ex
+                    finally:
+                        if disconnect_run:
+                            await self._client.disconnect()  # device disconnects itself
+                except Exception as ex:
+                    LOGGER.error("Error: %s - %s", type(ex).__name__, ex)
+                    raise
+            # Safe to test outside the lock: releasing it does not yield to
+            # the loop, so nothing can slip in between the release and here.
+            # A concurrent caller either queued while we held the lock, which
+            # this catches, or arrives afterwards and drives its own loop.
+            if self._cmd_next is pending:
+                return
+            LOGGER.debug(
+                "%s: sending %s that arrived while busy",
+                self.name,
+                self._cmd_next[0][0],
+            )
 
     async def _query(self, cmd: tuple[ShadeCmd, bytes]) -> bytes:
         """Send a read-type opcode and return its payload bytes."""
