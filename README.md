@@ -9,8 +9,8 @@ Control Hunter Douglas PowerView shades from Home Assistant over Bluetooth LE.
 No cloud account, no vendor app in the loop, and no dependency on Hunter
 Douglas's servers — Home Assistant talks to each shade directly.
 
-A PowerView G3 hub is optional. If you have one, the integration will use it for
-the handful of details the shades don't report reliably over the air.
+A PowerView G3 hub is optional. If you have one, it saves you finding the home
+key by hand and names your shades the way the PowerView app does.
 
 ## Requirements
 
@@ -82,7 +82,9 @@ Both are stored with the config entry and persist across updates. Use
 
 ### Getting the home key
 
-Every shade in a home shares one key. Three ways to obtain it:
+Every shade in a home shares one key. If you have a G3 hub, the setup form will
+fetch it for you — skip to [Connecting a hub](#connecting-a-hub). Otherwise there
+are three ways to obtain it:
 
 1. **Adopt an emulated shade.** The [shade emulator](/emu/PV_BLE_cover) runs on
    an ESP32 (≥ 2 MiB flash, ≥ 128 KiB RAM) such as an
@@ -96,14 +98,17 @@ Every shade in a home shares one key. Three ways to obtain it:
 
 ### Connecting a hub
 
-The hub is optional, but worth adding if you have one. With a hub URL set, the
-integration reads two things over HTTP instead of Bluetooth:
+The hub is optional, but worth adding if you have one. It contributes two things
+over HTTP:
 
-- **Whether a shade is battery powered.** Shades do not report this reliably
-  over the air, which previously caused battery entities to appear on hardwired
-  shades and vice versa.
-- **Friendly names.** Names follow whatever you have set in the PowerView app,
-  and persist if the hub later goes offline.
+- **The home key**, during setup. The setup form offers to fetch it from the hub,
+  which is easier than any of the methods above.
+- **Friendly names.** Names follow whatever you have set in the PowerView app.
+  They are cached with the config entry, so they survive the hub going offline.
+
+Everything else — shade state, position, tilt and every command — is Bluetooth,
+whether a hub is configured or not. A shade out of Bluetooth range is unavailable
+even if the hub can still see it.
 
 ## Entities
 
@@ -116,9 +121,9 @@ Platform | Entity | Notes
 `cover` | Combined / Front / Rear | Dual-fabric shades only — see [Dual-fabric shades](#dual-fabric-shades)
 `number` | Velocity | Movement speed, 0–100. Configuration entity
 `button` | Identify | Flashes the LED and beeps three times
-`sensor` | Battery | 100% (full), 50%, 20%, 0% (empty)
+`sensor` | Battery | 100% (full), 50%, 20%, 0% (empty). Created for every shade — see [Known issues](#known-issues)
 `sensor` | Signal strength | BLE RSSI, in dBm. Diagnostic entity
-`binary_sensor` | Charging | On while the battery is charging
+`binary_sensor` | Charging | On while the battery is charging. Created for every shade
 `binary_sensor` | Clock reset required | Diagnostic, `problem` device class
 `binary_sensor` | Mode reset required | Diagnostic, `problem` device class
 
@@ -193,6 +198,22 @@ Diagnostics include the decoded shade state and capability flags with the home
 key redacted, which is usually enough to identify a problem without a round trip.
 
 ## Known issues
+
+<details><summary>Battery entities appear on hardwired shades</summary>
+
+Every shade gets a `Battery` sensor and a `Charging` binary sensor, mains-wired
+or not. On a hardwired shade the battery sits at a constant 100%.
+
+The power source is not something the shades report reliably: the advertisement's
+power level is two bits wide and its top code means "100% to 51% remaining" *or*
+"hardwired", with no way to tell them apart. An earlier attempt to detect it
+misread a status byte as a power-type enum and stripped the battery sensors off
+real battery shades, so it was removed rather than left to guess.
+
+Hide the entities you don't want from the shade's device page. Resolving it
+properly needs data from a battery-powered shade — see
+[#23](https://github.com/safepay/hdpv_ble/issues/23) if you have one.
+</details>
 
 <details><summary>Schedules stop after a shade loses power</summary>
 
