@@ -100,12 +100,17 @@ class ShadeCapability(NamedTuple):
     is_top_down: bool = False  # position logic is inverted (type 7 only)
     is_tdbu: bool = False  # dual-rail Top Down Bottom Up (needs two entities)
     is_duolite: bool = False  # dual-fabric sheer+opaque (needs three entities)
+    has_vane: bool = False  # Duette/Applause privacy vanes controlled via pos2, exposed as tilt
 
 
 # Capabilities mirror the aiopvapi class each type is registered under, so a
 # type behaves the same here as it does over the hub API. Types absent from
 # this table fall back to plain up/down, which is aiopvapi's capability 0.
+# Duette/Applause with privacy vanes (pos2) are exposed as tilt in HA - PR#33 from patman15/hdpv_ble
 SHADE_CAPABILITIES: Final[dict[int, ShadeCapability]] = {
+    # duette / applause with vanes (privacy) - controlled via pos2, exposed as tilt
+    6: ShadeCapability(has_vane=True),
+    10: ShadeCapability(has_vane=True),
     # tilt anywhere (position + tilt)
     51: ShadeCapability(has_tilt=True),
     54: ShadeCapability(has_tilt=True),

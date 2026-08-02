@@ -50,6 +50,8 @@ def _add_entities(
         ]
     elif caps.is_tilt_on_closed:
         entities = [PowerViewCoverTiltOnClosed(coordinator)]
+    elif caps.has_vane:
+        entities = [PowerViewCoverDuette(coordinator)]
     elif caps.has_tilt:
         entities = [PowerViewCoverTilt(coordinator)]
     elif caps.is_top_down:
@@ -335,6 +337,39 @@ class PowerViewCoverTiltOnClosed(PowerViewCoverTilt):
             await self._async_move_to(CLOSED_POSITION)
             return
         await super().async_set_cover_tilt_position(**kwargs)
+
+
+class PowerViewCoverDuette(PowerViewCoverTiltBase):
+    """Duette / Applause with privacy vanes controlled via pos2, exposed as tilt.
+
+    Patman15 PR#33 (bob's fork) implementation:
+    - vanes position is advertised as position2 (0-100 %)
+    - HA represents vanes as a tilt slider for UX consistency
+    - pos2 uses same *100 wire encoding as pos1 (not like tilt)
+
+    Types 6 (Duette) and 10 (Duette and Applause SkyLift) confirmed;
+    types 8/9/33 are TDBU in this fork and keep their dual-rail entities.
+    """
+
+    _attr_name = None
+
+    @property
+    def current_cover_tilt_position(self) -> int | None:  # type: ignore[reportIncompatibleVariableOverride]
+        """Return vanes position as tilt (0-100 %)."""
+        pos2 = self._fresh_position("position2")
+        return round(pos2) if pos2 is not None else None
+
+    @callback
+    def _get_shade_tilt(self, target: int) -> ShadeMove | None:
+        """Translate HA tilt target into a pos2 (vane) move, restating lift."""
+        pos1 = self._fresh_position(ATTR_CURRENT_POSITION)
+        if pos1 is None:
+            return None
+        # pos2 is a lift-rail like pos1, so it needs *100 encoding, not tilt's
+        # unscaled encoding. ShadeMove carries the raw HA %; set_position() does
+        # the *100 itself.
+        return ShadeMove(pos1=pos1, pos2=target)
+
 
 
 class PowerViewCoverTiltOnly(PowerViewCoverTilt):
