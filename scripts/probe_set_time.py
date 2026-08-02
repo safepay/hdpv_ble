@@ -61,6 +61,7 @@ Usage:
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 import sys
 
@@ -89,6 +90,12 @@ CMD_SET_TIME = 0xFF77
 # Present in the emulator only as a commented-out case, so the number is
 # known but nothing has ever answered it. --read-time finds out.
 CMD_GET_TIME = 0xFF67
+
+# "Set sunrise/sunset", which the shade needs for solar-tied schedules.
+# The emulator prints six bytes for it -- sunrise h/m/s then sunset h/m/s --
+# but its branch never checks msg.data_len, which is exactly how 0xFF77's
+# missing weekday went unnoticed. Swept rather than trusted.
+CMD_SET_SOLAR = 0xFF87
 
 # Reply status byte; see PV_ERROR_CODES in shade_report.py.  0x80 appears
 # only at the correct length with a refused field value, so the firmware
@@ -162,6 +169,37 @@ def _dow_candidates(now: datetime) -> list[tuple[str, bytes]]:
     ]
 
 
+def _solar_candidates(_now: datetime) -> list[tuple[str, bytes]]:
+    """Sweep payload lengths for 0xFF87, "set sunrise/sunset".
+
+    The emulator reads six bytes -- sunrise h/m/s then sunset h/m/s -- and
+    acks whatever arrives without checking the length, the same blind spot
+    that hid 0xFF77's weekday byte.  So the length is established the same
+    way: hold plausible in-range values and vary only how many bytes go.
+
+    Times are fixed rather than real, because only the length is in
+    question here and a wildly out-of-range hour would draw an 0x80
+    "invalid value" that muddles the reading.
+    """
+    core = bytes([6, 45, 0, 17, 30, 0])  # 06:45:00 rise, 17:30:00 set
+    padded = core + bytes(MAX_PAYLOAD)
+    out: list[tuple[str, bytes]] = [
+        (f"sweep len {n:>2}", padded[:n]) for n in range(2, MAX_PAYLOAD + 1)
+    ]
+    # If the real payload carries a date as well -- plausible, since solar
+    # times are only valid for one day -- these put one in the likely spots.
+    today = datetime.now()
+    ymd = bytes([today.year % 100, today.month, today.day])
+    year_le = int.to_bytes(today.year, 2, "little")
+    out += [
+        ("var  +yy-mm-dd", core + ymd),
+        ("var  +yyyy-mm-dd", core + year_le + ymd[1:]),
+        ("var  yy-mm-dd first", ymd + core),
+        ("var  yyyy-mm-dd first", year_le + ymd[1:] + core),
+    ]
+    return out
+
+
 def _describe(reply: bytes) -> tuple[int | None, str]:
     """Turn a reply payload into (status, human description)."""
     if len(reply) != 1:
@@ -210,13 +248,13 @@ def _resolve_key(hub: str, home_key_hex: str | None) -> bytes | None:
 
 
 async def _sweep(
-    api: PowerViewClient, candidates: list[tuple[str, bytes]]
+    api: PowerViewClient, cmd: int, candidates: list[tuple[str, bytes]]
 ) -> list[tuple[int, str, bytes]]:
     """Send every candidate, print the shade's status, return the accepted."""
     accepted: list[tuple[int, str, bytes]] = []
     for idx, (label, payload) in enumerate(candidates):
         try:
-            reply = await api.query(CMD_SET_TIME, payload)
+            reply = await api.query(cmd, payload)
         except (TimeoutError, ValueError) as ex:
             print(f"  {label:<22} {payload.hex(' '):<50} -- {ex}")
             continue
@@ -475,6 +513,15 @@ async def _run_single(api: PowerViewClient, mode: str, set_dow: int) -> int:
     return await _resolve_dow(api)
 
 
+def _plan(mode: str) -> tuple[Callable[[datetime], list[tuple[str, bytes]]], int]:
+    """Pick the candidate builder and the opcode a sweep mode drives."""
+    if mode == "dow":
+        return _dow_candidates, CMD_SET_TIME
+    if mode == "solar":
+        return _solar_candidates, CMD_SET_SOLAR
+    return _candidates, CMD_SET_TIME
+
+
 async def _probe(
     ble_name: str,
     hub: str,
@@ -499,25 +546,25 @@ async def _probe(
             return await _run_single(api, mode, set_dow)
 
     dow_sweep = mode == "dow"
-    build = _dow_candidates if dow_sweep else _candidates
+    build, opcode = _plan(mode)
     now = datetime.now().replace(microsecond=0)
     candidates = build(now)
     print(
-        f"\nProbing {ble_name} with 0xFF77, reference time "
+        f"\nProbing {ble_name} with 0x{opcode:04X}, reference time "
         f"{now:%Y-%m-%d %H:%M:%S} ({len(candidates)} candidates)\n"
     )
     print(f"  {'candidate':<22} {'payload':<50} status")
     print(f"  {'-' * 22} {'-' * 50} {'-' * 20}")
 
     async with PowerViewClient(dev, home_key) as api:
-        accepted = await _sweep(api, candidates)
+        accepted = await _sweep(api, opcode, candidates)
 
         print()
         if not accepted:
             print("No candidate was accepted. Every reply was a rejection.")
             print(
-                "Next step is a btsnoop capture of the vendor app setting the "
-                "time, to read the real payload off the wire."
+                "Next step is a BLE sniffer capture of the gateway talking to "
+                "the shade, to read the real payload off the wire."
             )
             return 1
 
@@ -542,14 +589,21 @@ async def _probe(
         else:
             idx, label, _ = accepted[0]
         payload = build(final)[idx][1]
-        code, note = _describe(await api.query(CMD_SET_TIME, payload))
+        code, note = _describe(await api.query(opcode, payload))
         stamp = f"{final:%Y-%m-%d %H:%M:%S}"
         result = f"0x{code:02X} {note}" if code is not None else note
         print(f"\nRe-sent '{label}' with {stamp}: {result}")
-    print(
-        "\nWatch the shade's next advertisement: byte 8 bit 1 (reset_clock) "
-        "should now be clear."
-    )
+    if opcode == CMD_SET_TIME:
+        print(
+            "\nWatch the shade's next advertisement: byte 8 bit 1 "
+            "(reset_clock) should now be clear."
+        )
+    else:
+        print(
+            "\nThe accepted length is the payload shape. Nothing in the "
+            "advertisement reflects\nsolar times, so there is no flag to "
+            "watch -- the status byte is the only signal."
+        )
     return 0
 
 
@@ -597,6 +651,14 @@ def main() -> int:
         ),
     )
     mode.add_argument(
+        "--solar-sweep",
+        action="store_true",
+        help=(
+            "Sweep 0xFF87 'set sunrise/sunset' payload lengths, the same way "
+            "the 0xFF77 layout was established"
+        ),
+    )
+    mode.add_argument(
         "--set-dow",
         type=int,
         choices=range(1, 8),
@@ -607,7 +669,9 @@ def main() -> int:
         ),
     )
     args = parser.parse_args()
-    if args.set_dow:
+    if args.solar_sweep:
+        chosen = "solar"
+    elif args.set_dow:
         chosen = "set"
     elif args.resolve_dow:
         chosen = "resolve"
