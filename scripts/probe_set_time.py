@@ -116,6 +116,11 @@ def _core(now: datetime) -> bytes:
     )
 
 
+def _sunday_first(iso: int) -> int:
+    """Return an isoweekday under the rival Sunday=1..Saturday=7 scheme."""
+    return iso % 7 + 1
+
+
 def _candidates(now: datetime) -> list[tuple[str, bytes]]:
     """Return (label, payload) pairs to try, cheapest hypothesis first.
 
@@ -169,7 +174,7 @@ def _dow_candidates(now: datetime) -> list[tuple[str, bytes]]:
     ]
 
 
-def _solar_candidates(_now: datetime) -> list[tuple[str, bytes]]:
+def _solar_candidates(now: datetime) -> list[tuple[str, bytes]]:
     """Sweep payload lengths for 0xFF87, "set sunrise/sunset".
 
     The emulator reads six bytes -- sunrise h/m/s then sunset h/m/s -- and
@@ -188,9 +193,8 @@ def _solar_candidates(_now: datetime) -> list[tuple[str, bytes]]:
     ]
     # If the real payload carries a date as well -- plausible, since solar
     # times are only valid for one day -- these put one in the likely spots.
-    today = datetime.now()
-    ymd = bytes([today.year % 100, today.month, today.day])
-    year_le = int.to_bytes(today.year, 2, "little")
+    ymd = bytes([now.year % 100, now.month, now.day])
+    year_le = int.to_bytes(now.year, 2, "little")
     out += [
         ("var  +yy-mm-dd", core + ymd),
         ("var  +yyyy-mm-dd", core + year_le + ymd[1:]),
@@ -201,11 +205,15 @@ def _solar_candidates(_now: datetime) -> list[tuple[str, bytes]]:
 
 
 def _describe(reply: bytes) -> tuple[int | None, str]:
-    """Turn a reply payload into (status, human description)."""
+    """Turn a reply payload into (status code, printable status).
+
+    The code is None when the reply was not a bare status byte at all, in
+    which case the description carries the raw bytes instead.
+    """
     if len(reply) != 1:
         return None, f"unexpected {len(reply)}-byte payload: {reply.hex(' ')}"
     code = reply[0]
-    return code, STATUS_LABELS.get(code, "unknown code")
+    return code, f"0x{code:02X} {STATUS_LABELS.get(code, 'unknown code')}"
 
 
 def _fetch_home_key(hub: str) -> bytes | None:
@@ -258,10 +266,9 @@ async def _sweep(
         except (TimeoutError, ValueError) as ex:
             print(f"  {label:<22} {payload.hex(' '):<50} -- {ex}")
             continue
-        code, note = _describe(reply)
+        code, status = _describe(reply)
         flag = "  <== ACCEPTED" if code == 0 else ""
-        shown = f"0x{code:02X} {note}" if code is not None else note
-        print(f"  {label:<22} {payload.hex(' '):<50} {shown}{flag}")
+        print(f"  {label:<22} {payload.hex(' '):<50} {status}{flag}")
         if code == 0:
             accepted.append((idx, label, payload))
     return accepted
@@ -323,7 +330,7 @@ def _decode_time(body: bytes) -> None:
         f"weekday {real.weekday()}."
     )
     iso = real.isoweekday()
-    sun1 = iso % 7 + 1
+    sun1 = _sunday_first(iso)
     if dow in (iso, sun1):
         scheme = "isoweekday (Mon=1..Sun=7)" if dow == iso else "Sunday=1..Saturday=7"
         print(
@@ -362,9 +369,8 @@ async def _read_time(api: PowerViewClient) -> int:
 
     print(f"0xFF67 replied with {len(reply)} byte(s): {reply.hex(' ')}")
     if len(reply) == 1:
-        code, note = _describe(reply)
-        shown = f"0x{code:02X} {note}" if code is not None else note
-        print(f"  status only ({shown}) — this firmware has no get-time.")
+        _, status = _describe(reply)
+        print(f"  status only ({status}) — this firmware has no get-time.")
         return 1
     # Read replies in this protocol lead with a status byte, as 0xFFDE does.
     if reply[0]:
@@ -401,7 +407,7 @@ async def _resolve_dow(api: PowerViewClient) -> int:
     # Both decoys sit inside the accepted 1..7 range and both are wrong for
     # today under either candidate convention, so neither can accidentally
     # be the right answer.
-    decoys = [d for d in (2, 3, 5, 6) if d not in (today, today % 7 + 1)][:2]
+    decoys = [d for d in (2, 3, 5, 6) if d not in (today, _sunday_first(today))][:2]
     print(f"Today is a {datetime.now():%A}. Writing decoy weekdays {decoys}.\n")
 
     seen: list[tuple[int, int | None]] = []
@@ -450,13 +456,12 @@ async def _resolve_dow(api: PowerViewClient) -> int:
 
     # Leave the shade holding our best guess rather than a decoy.
     now = datetime.now().replace(microsecond=0)
-    code, note = _describe(
+    _, status = _describe(
         await api.query(CMD_SET_TIME, _core(now) + bytes([now.isoweekday()]))
     )
-    shown = f"0x{code:02X} {note}" if code is not None else note
     print(
         f"\nRestored {now:%Y-%m-%d %H:%M:%S}, weekday "
-        f"{now.isoweekday()} (isoweekday): {shown}"
+        f"{now.isoweekday()} (isoweekday): {status}"
     )
     return outcome
 
@@ -472,7 +477,7 @@ async def _set_dow(api: PowerViewClient, dow: int) -> int:
     """
     now = datetime.now().replace(microsecond=0)
     iso = now.isoweekday()
-    sun1 = iso % 7 + 1  # the same day under a Sunday=1..Saturday=7 scheme
+    sun1 = _sunday_first(iso)
     if dow in (iso, sun1):
         # Reading this value back later could mean either "the vendor wrote
         # it" or "the vendor never wrote and our own value survived", which
@@ -485,9 +490,8 @@ async def _set_dow(api: PowerViewClient, dow: int) -> int:
         )
         return 1
 
-    code, note = _describe(await api.query(CMD_SET_TIME, _core(now) + bytes([dow])))
-    shown = f"0x{code:02X} {note}" if code is not None else note
-    print(f"Wrote {now:%Y-%m-%d %H:%M:%S} with weekday {dow}: {shown}")
+    code, status = _describe(await api.query(CMD_SET_TIME, _core(now) + bytes([dow])))
+    print(f"Wrote {now:%Y-%m-%d %H:%M:%S} with weekday {dow}: {status}")
     if code:
         return 1
     print(
@@ -589,10 +593,9 @@ async def _probe(
         else:
             idx, label, _ = accepted[0]
         payload = build(final)[idx][1]
-        code, note = _describe(await api.query(opcode, payload))
+        _, status = _describe(await api.query(opcode, payload))
         stamp = f"{final:%Y-%m-%d %H:%M:%S}"
-        result = f"0x{code:02X} {note}" if code is not None else note
-        print(f"\nRe-sent '{label}' with {stamp}: {result}")
+        print(f"\nRe-sent '{label}' with {stamp}: {status}")
     if opcode == CMD_SET_TIME:
         print(
             "\nWatch the shade's next advertisement: byte 8 bit 1 "
