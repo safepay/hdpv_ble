@@ -33,18 +33,20 @@ the emulator carries it only as a commented-out case.  Phase 4
 back: the shade echoed every one, so it stores the byte without ever
 interpreting it and cannot be made to reveal the mapping.
 
-Phase 5 (--set-dow N) is the way round that.  The shade holds whatever it
-is given, and the vendor pushes clock updates of its own, so parking a
-value the vendor could not have chosen and reading back after it writes
-turns the vendor into the oracle for its own convention.
+Phase 5 (--set-dow N) parks a value the vendor could not have chosen, so
+a later read shows whether the vendor has written since.  Getting the
+vendor to write on demand turned out to be the hard part: with a G3
+gateway present the app talks to the gateway, which relays over its own
+radio, so no direct BLE session is opened and no clock is pushed -- the
+parked value came back untouched.  Nor can the app be pushed onto direct
+BLE by powering the gateway off, because it needs the gateway to manage
+the home at all.
 
-The catch is getting the vendor to write.  Driving a shade from the
-PowerView app with a G3 gateway present does NOT do it: the app talks to
-the gateway, which relays over its own radio, so no direct BLE session is
-opened and no clock is pushed -- observed, with the parked value coming
-back untouched.  The app pushes only when it must reach the shade over
-BLE itself, which means powering the gateway off.  Use --home-key there,
-since the hub cannot serve the key while it is off.
+The answer came instead from --read-time against shades nobody had
+written to, with the integration stopped: their clocks are accurate to
+the second, only the gateway has ever set them, and they read 7 on a
+Sunday.  So the field is ISO 8601, Monday=1..Sunday=7 -- isoweekday().
+--set-dow still has a use, in spotting when the gateway next writes.
 
 UNLIKE shade_report.py, THIS SCRIPT WRITES.  It sends exactly one opcode,
 0xFF77, and nothing else -- no move, no scene, no rekey, no power-type

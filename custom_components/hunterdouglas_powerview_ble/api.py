@@ -528,14 +528,13 @@ class PowerViewBLE:
         # length, so the missing field went unnoticed there; fw_rev=22 rejects
         # every other length with status 0x04.
         #
-        # The weekday is 1-based. Sweeping it 0-15 on a fixed date got 1-7
-        # accepted and everything else refused with 0x80, so the shade
-        # bounds-checks the byte and never cross-checks it against the date.
-        # That rules out weekday(), which is 0 on Mondays and would be
-        # refused every Monday. isoweekday() is Monday=1..Sunday=7; whether
-        # the firmware reads it that way or as Sunday=1..Saturday=7 is not
-        # established, and cannot be while it accepts the whole range. Both
-        # set the clock, which is what clears `reset_clock`. See issue #5.
+        # The weekday is ISO 8601, Monday=1..Sunday=7 -- isoweekday(), not
+        # weekday(). Sweeping the byte 0-15 got 1-7 accepted and everything
+        # else refused with 0x80, so the shade bounds-checks it and never
+        # derives it from the date; weekday() is 0 on Mondays and would have
+        # been refused one day in seven. Monday=1 was then read off shades
+        # whose clocks only the G3 gateway had ever set, with the
+        # integration stopped: accurate to the second, and 7 on a Sunday.
         payload: Final[bytes] = int.to_bytes(now.year, 2, byteorder="little") + bytes(
             [now.month, now.day, now.hour, now.minute, now.second, now.isoweekday()]
         )
