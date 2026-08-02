@@ -20,6 +20,8 @@ Add a diagnostics download from the shade's device page (**⋮ → Download
 diagnostics**) and [open an issue](https://github.com/safepay/hdpv_ble/issues/new?template=bug.yml)
 with both files.
 
+Note that PR's submitted WITHOUT logs and diagnostics will nor be considered.
+
 Diagnostics carry the raw advertisement bytes and GATT replies, with the home key
 and serial numbers redacted. What they can't capture is anything physical —
 whether the shade runs on a battery, which fabric moved, which way it went. Put
