@@ -57,12 +57,24 @@ installed at the same time. It is not a drop-in replacement:
 - No migration handler is provided, so Home Assistant will fail to load entries
   created by the original rather than converting them.
 
+You do, however, already have the one thing setup asks for. The original's home
+key was compiled in, so it is sitting in your installed copy — copy it out before
+you uninstall anything, and setting up again is just pasting it back.
+
 To move across:
 
-1. Go to **Settings → Devices & Services** and delete every existing
+1. **Note down your home key.** Open
+   `custom_components/hunterdouglas_powerview_ble/const.py` in your existing
+   install and copy the value of `HOME_KEY`, e.g.
+   `\x01\x02\x03\x04\x05\x06\x07\x08\x09\x0a\x0b\x0c\x0d\x0e\x0f\x10`. Keep the
+   escapes — the setup form takes that form as-is. Removing the integration
+   deletes this file, so do it first.
+2. Go to **Settings → Devices & Services** and delete every existing
    "Hunter Douglas PowerView (BLE)" entry.
-2. Remove `patman15/hdpv_ble` in HACS.
-3. Install this repository, restart, and set it up fresh.
+3. Remove `patman15/hdpv_ble` in HACS.
+4. Install this repository and restart Home Assistant.
+5. Your shades are rediscovered over Bluetooth. Paste the home key into the
+   **HomeKey** field on the dialog that appears.
 
 Entity IDs, recorder history and long-term statistics from the original do not
 survive this. Automations, scripts and dashboards referencing the old entity IDs
