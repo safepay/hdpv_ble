@@ -2,6 +2,7 @@
 
 import asyncio
 from dataclasses import dataclass
+from datetime import time as dt_time
 from enum import Enum
 import time
 from typing import Final, NamedTuple
@@ -196,6 +197,7 @@ class ShadeCmd(Enum):
     # byte-swapped, because _transact writes them little-endian: the
     # emulator's 0xFF77 "set shade time" is 0x77FF here.
     SET_TIME = 0x77FF
+    SET_SOLAR = 0x87FF
 
 
 @dataclass
@@ -235,6 +237,9 @@ class PowerViewBLE:
         # sitting with a dead clock because we assumed the best.
         self._clock_reset: bool | None = None
         self._last_time_set: float = 0.0
+        # Today's sunrise and sunset, or None where the sun does not do
+        # both. Supplied by the coordinator, which is the side with a hass.
+        self._solar: tuple[dt_time, dt_time] | None = None
         self._cmd_lock: Final = asyncio.Lock()
         # The pending command and the disconnect behaviour it wants. The two
         # travel together because the coroutine that ends up sending a
@@ -271,6 +276,15 @@ class PowerViewBLE:
     @clock_reset.setter
     def clock_reset(self, value: bool) -> None:
         self._clock_reset = value
+
+    @property
+    def solar(self) -> tuple[dt_time, dt_time] | None:
+        """Return today's (sunrise, sunset), or None if not available."""
+        return self._solar
+
+    @solar.setter
+    def solar(self, value: tuple[dt_time, dt_time] | None) -> None:
+        self._solar = value
 
     @property
     def has_key(self) -> bool:
@@ -612,30 +626,7 @@ class PowerViewBLE:
         except (BleakError, TimeoutError) as ex:
             LOGGER.debug("%s: clock update failed: %s", self.name, ex)
             return
-        # Validated inline rather than via _verify_ack_reply, which logs at
-        # error level -- a shade that rejects this must not fill the log on
-        # every connect.
-        ack: Final[bytes] = int.to_bytes(
-            ShadeCmd.SET_TIME.value & 0xFFEF, 2, byteorder="little"
-        )
-        if not (
-            len(self._data) > 4 and self._data[0:2] == ack and self._data[2] == seq
-        ):
-            LOGGER.debug(
-                "%s: unrecognised reply to clock update: %s",
-                self.name,
-                self._data.hex(" "),
-            )
-            return
-        status: Final[int] = self._data[4]
-        if status:
-            # 0x04 is "invalid length", 0x80 "invalid field value" -- see
-            # PV_ERROR_CODES in scripts/shade_report.py. Neither is expected
-            # from the payload above, so a shade answering this way is on
-            # firmware wanting a different shape and is worth a bug report.
-            LOGGER.debug(
-                "%s: shade rejected the clock update, status 0x%02X", self.name, status
-            )
+        if self._quiet_ack(seq, ShadeCmd.SET_TIME) != 0:
             return
         # Track the successful push only. Clearing the cached flag too keeps
         # a reconnect that lands before the next advertisement from sending
@@ -643,6 +634,77 @@ class PowerViewBLE:
         self._last_time_set = time.monotonic()
         self._clock_reset = False
         LOGGER.debug("%s: clock set to %s", self.name, now.isoformat())
+        await self._set_solar()
+
+    def _quiet_ack(self, seq: int, cmd: ShadeCmd) -> int | None:
+        """Return the status byte of an ack reply, logging only at debug.
+
+        Deliberately not _verify_ack_reply, which logs at error level. These
+        are unsolicited housekeeping commands nobody asked for, so a shade
+        that refuses one must not fill the log on every connect. None means
+        the reply was not recognisable as an ack for this command.
+
+        Known statuses are 0x04 "invalid length" and 0x80 "invalid field
+        value" -- PV_ERROR_CODES in scripts/shade_report.py. Neither is
+        expected from the payloads sent here, so a shade answering that way
+        runs firmware wanting a different shape and is worth a bug report.
+        """
+        ack: Final[bytes] = int.to_bytes(cmd.value & 0xFFEF, 2, byteorder="little")
+        if not (
+            len(self._data) > 4 and self._data[0:2] == ack and self._data[2] == seq
+        ):
+            LOGGER.debug(
+                "%s: unrecognised reply to %s: %s",
+                self.name,
+                cmd.name,
+                self._data.hex(" "),
+            )
+            return None
+        status: Final[int] = self._data[4]
+        if status:
+            LOGGER.debug(
+                "%s: shade rejected %s, status 0x%02X", self.name, cmd.name, status
+            )
+        return status
+
+    async def _set_solar(self) -> None:
+        """Push today's sunrise and sunset. Best effort, never raises.
+
+        Solar-tied schedules ("close at sunset") are driven from these, and
+        the payload carries no date -- probing every length 2..16 found only
+        6 accepted, three bytes of sunrise then three of sunset -- so the
+        shade applies whatever it was last told to today, and the values go
+        stale as the days shift. Riding along with the clock update gives
+        the refresh for free: same daily cadence, same recovery after a
+        power loss, one extra round trip on the connections that already
+        carry a clock write.
+        """
+        if self._solar is None:
+            return
+        sunrise, sunset = self._solar
+        payload: Final[bytes] = bytes(
+            [
+                sunrise.hour,
+                sunrise.minute,
+                sunrise.second,
+                sunset.hour,
+                sunset.minute,
+                sunset.second,
+            ]
+        )
+        try:
+            seq = await self._transact((ShadeCmd.SET_SOLAR, payload))
+        except (BleakError, TimeoutError) as ex:
+            LOGGER.debug("%s: solar update failed: %s", self.name, ex)
+            return
+        if self._quiet_ack(seq, ShadeCmd.SET_SOLAR) != 0:
+            return
+        LOGGER.debug(
+            "%s: sunrise %s, sunset %s",
+            self.name,
+            sunrise.isoformat(),
+            sunset.isoformat(),
+        )
 
     async def _connect(self) -> None:
         """Connect to the device and setup notification if not connected."""

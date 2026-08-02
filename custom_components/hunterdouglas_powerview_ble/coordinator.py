@@ -1,6 +1,7 @@
 """Home Assistant coordinator for Hunter Douglas PowerView (BLE) integration."""
 
 import asyncio
+from datetime import date, time as dt_time
 import time
 from typing import Any, Final
 
@@ -12,9 +13,12 @@ from homeassistant.components.bluetooth.const import DOMAIN as BLUETOOTH_DOMAIN
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothDataUpdateCoordinator,
 )
+from homeassistant.const import SUN_EVENT_SUNRISE, SUN_EVENT_SUNSET
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
 from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
+from homeassistant.helpers.sun import get_astral_event_date
+from homeassistant.util import dt as dt_util
 
 from .api import SHADE_TYPE, PowerViewBLE, ShadeCapability, get_shade_capabilities
 from .const import ATTR_RSSI, CONF_HOME_KEY, DOMAIN, LOGGER
@@ -55,6 +59,8 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         self.velocity: int = 0
         self._last_dev_info_at: float = 0.0
         self._dev_info_task: asyncio.Task[None] | None = None
+        self._solar_day: date | None = None
+        self._solar: tuple[dt_time, dt_time] | None = None
 
         LOGGER.debug(
             "Initializing coordinator for %s (%s)",
@@ -130,6 +136,30 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
             await self.query_dev_info()
         except (BleakError, TimeoutError) as ex:
             LOGGER.debug("%s: dev_info refresh failed: %s", self.name, ex)
+
+    def _solar_times(self) -> tuple[dt_time, dt_time] | None:
+        """Return today's sunrise and sunset as local wall-clock times.
+
+        Cached per day. The shade's solar payload carries no date, so these
+        only need recomputing when the date rolls over -- which matters
+        because this runs on every advertisement, several a second while a
+        shade is moving.
+
+        None where the sun does not both rise and set, which astral reports
+        as a missing event and which is a real case above the Arctic circle.
+        """
+        today = dt_util.now().date()
+        if self._solar_day == today:
+            return self._solar
+        self._solar_day = today
+        sunrise = get_astral_event_date(self.hass, SUN_EVENT_SUNRISE, today)
+        sunset = get_astral_event_date(self.hass, SUN_EVENT_SUNSET, today)
+        self._solar = (
+            None
+            if sunrise is None or sunset is None
+            else (dt_util.as_local(sunrise).time(), dt_util.as_local(sunset).time())
+        )
+        return self._solar
 
     def _maybe_refresh_dev_info(self) -> None:
         """Schedule a background dev_info refresh if stale."""
@@ -209,8 +239,10 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
             if decoded:
                 new_data.update(decoded)
                 self.api.encrypted = bool(decoded.get("home_id"))
-                # Drives whether the next connection carries a clock update.
+                # Drives whether the next connection carries a clock update,
+                # and what solar times ride along with it.
                 self.api.clock_reset = bool(decoded.get("reset_clock"))
+                self.api.solar = self._solar_times()
                 self._last_v2_at = time.monotonic()
                 self._maybe_refresh_dev_info()
 
