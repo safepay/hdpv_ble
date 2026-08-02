@@ -339,7 +339,6 @@ class PowerViewBLE:
         # silently never sent, and the window is not small -- it spans the
         # transact and, for a command that disconnects, the seconds that
         # takes.
-        pending: tuple[tuple[ShadeCmd, bytes], bool] = self._cmd_next
         while True:
             async with self._cmd_lock:
                 try:
@@ -621,12 +620,7 @@ class PowerViewBLE:
         payload: Final[bytes] = int.to_bytes(now.year, 2, byteorder="little") + bytes(
             [now.month, now.day, now.hour, now.minute, now.second, now.isoweekday()]
         )
-        try:
-            seq = await self._transact((ShadeCmd.SET_TIME, payload))
-        except (BleakError, TimeoutError) as ex:
-            LOGGER.debug("%s: clock update failed: %s", self.name, ex)
-            return
-        if self._quiet_ack(seq, ShadeCmd.SET_TIME) != 0:
+        if not await self._send_quiet(ShadeCmd.SET_TIME, payload):
             return
         # Track the successful push only. Clearing the cached flag too keeps
         # a reconnect that lands before the next advertisement from sending
@@ -635,37 +629,6 @@ class PowerViewBLE:
         self._clock_reset = False
         LOGGER.debug("%s: clock set to %s", self.name, now.isoformat())
         await self._set_solar()
-
-    def _quiet_ack(self, seq: int, cmd: ShadeCmd) -> int | None:
-        """Return the status byte of an ack reply, logging only at debug.
-
-        Deliberately not _verify_ack_reply, which logs at error level. These
-        are unsolicited housekeeping commands nobody asked for, so a shade
-        that refuses one must not fill the log on every connect. None means
-        the reply was not recognisable as an ack for this command.
-
-        Known statuses are 0x04 "invalid length" and 0x80 "invalid field
-        value" -- PV_ERROR_CODES in scripts/shade_report.py. Neither is
-        expected from the payloads sent here, so a shade answering that way
-        runs firmware wanting a different shape and is worth a bug report.
-        """
-        ack: Final[bytes] = int.to_bytes(cmd.value & 0xFFEF, 2, byteorder="little")
-        if not (
-            len(self._data) > 4 and self._data[0:2] == ack and self._data[2] == seq
-        ):
-            LOGGER.debug(
-                "%s: unrecognised reply to %s: %s",
-                self.name,
-                cmd.name,
-                self._data.hex(" "),
-            )
-            return None
-        status: Final[int] = self._data[4]
-        if status:
-            LOGGER.debug(
-                "%s: shade rejected %s, status 0x%02X", self.name, cmd.name, status
-            )
-        return status
 
     async def _set_solar(self) -> None:
         """Push today's sunrise and sunset. Best effort, never raises.
@@ -692,12 +655,7 @@ class PowerViewBLE:
                 sunset.second,
             ]
         )
-        try:
-            seq = await self._transact((ShadeCmd.SET_SOLAR, payload))
-        except (BleakError, TimeoutError) as ex:
-            LOGGER.debug("%s: solar update failed: %s", self.name, ex)
-            return
-        if self._quiet_ack(seq, ShadeCmd.SET_SOLAR) != 0:
+        if not await self._send_quiet(ShadeCmd.SET_SOLAR, payload):
             return
         LOGGER.debug(
             "%s: sunrise %s, sunset %s",
@@ -705,6 +663,51 @@ class PowerViewBLE:
             sunrise.isoformat(),
             sunset.isoformat(),
         )
+
+    async def _send_quiet(self, cmd: ShadeCmd, payload: bytes) -> bool:
+        """Send a housekeeping command and report whether the shade took it.
+
+        Swallows transport failures rather than propagating them; see
+        _set_time for why these must never reach the caller.
+        """
+        try:
+            seq = await self._transact((cmd, payload))
+        except (BleakError, TimeoutError) as ex:
+            LOGGER.debug("%s: %s failed: %s", self.name, cmd.name, ex)
+            return False
+        return self._ack_ok(seq, cmd)
+
+    def _ack_ok(self, seq: int, cmd: ShadeCmd) -> bool:
+        """Return whether an ack reply reports success, logging only at debug.
+
+        Deliberately not _verify_ack_reply, which logs at error level. These
+        are unsolicited housekeeping commands nobody asked for, so a shade
+        that refuses one must not fill the log on every connect. A reply that
+        is not recognisable as an ack for this command counts as a failure.
+
+        Known statuses are 0x04 "invalid length" and 0x80 "invalid field
+        value" -- PV_ERROR_CODES in scripts/shade_report.py. Neither is
+        expected from the payloads sent here, so a shade answering that way
+        runs firmware wanting a different shape and is worth a bug report.
+        """
+        ack: Final[bytes] = int.to_bytes(cmd.value & 0xFFEF, 2, byteorder="little")
+        if not (
+            len(self._data) > 4 and self._data[0:2] == ack and self._data[2] == seq
+        ):
+            LOGGER.debug(
+                "%s: unrecognised reply to %s: %s",
+                self.name,
+                cmd.name,
+                self._data.hex(" "),
+            )
+            return False
+        status: Final[int] = self._data[4]
+        if status:
+            LOGGER.debug(
+                "%s: shade rejected %s, status 0x%02X", self.name, cmd.name, status
+            )
+            return False
+        return True
 
     async def _connect(self) -> None:
         """Connect to the device and setup notification if not connected."""
