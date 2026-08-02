@@ -209,6 +209,8 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
             if decoded:
                 new_data.update(decoded)
                 self.api.encrypted = bool(decoded.get("home_id"))
+                # Drives whether the next connection carries a clock update.
+                self.api.clock_reset = bool(decoded.get("reset_clock"))
                 self._last_v2_at = time.monotonic()
                 self._maybe_refresh_dev_info()
 
