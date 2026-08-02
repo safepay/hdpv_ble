@@ -492,7 +492,7 @@ async def _set_dow(api: PowerViewClient, dow: int) -> int:
 
     code, status = _describe(await api.query(CMD_SET_TIME, _core(now) + bytes([dow])))
     print(f"Wrote {now:%Y-%m-%d %H:%M:%S} with weekday {dow}: {status}")
-    if code:
+    if code != 0:  # None too: an unreadable reply is no confirmation either
         return 1
     print(
         f"\n  Today is a {now:%A}: isoweekday {iso}, Sunday=1 scheme {sun1}. "

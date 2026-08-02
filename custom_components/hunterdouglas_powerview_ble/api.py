@@ -230,16 +230,20 @@ class PowerViewBLE:
         self._data_event = asyncio.Event()
         self._data: bytes = b""
         self._info: PVDeviceInfo = PVDeviceInfo()
-        self._is_encrypted: bool = False
+        # The three the coordinator writes from each advertisement, so they
+        # are plain attributes rather than pass-through properties.
+        #
+        # Whether communication with this shade is encrypted.
+        self.encrypted: bool = False
         # None until an advertisement has been decoded. Unknown counts as
         # "needs setting": a shade we cannot currently hear may have
         # rebooted unseen, and a redundant push is cheaper than a shade
         # sitting with a dead clock because we assumed the best.
-        self._clock_reset: bool | None = None
-        self._last_time_set: float = 0.0
+        self.clock_reset: bool | None = None
         # Today's sunrise and sunset, or None where the sun does not do
         # both. Supplied by the coordinator, which is the side with a hass.
-        self._solar: tuple[dt_time, dt_time] | None = None
+        self.solar: tuple[dt_time, dt_time] | None = None
+        self._last_time_set: float = 0.0
         self._cmd_lock: Final = asyncio.Lock()
         # The pending command and the disconnect behaviour it wants. The two
         # travel together because the coroutine that ends up sending a
@@ -258,33 +262,6 @@ class PowerViewBLE:
     def set_ble_device(self, ble_device: BLEDevice) -> None:
         """Update the BLE device reference (e.g. when proxy details change)."""
         self._ble_device = ble_device
-
-    @property
-    def encrypted(self) -> bool:
-        """Return whether communication with this shade is encrypted."""
-        return self._is_encrypted
-
-    @encrypted.setter
-    def encrypted(self, value: bool) -> None:
-        self._is_encrypted = value
-
-    @property
-    def clock_reset(self) -> bool | None:
-        """Return whether the shade last advertised a lost clock, or None."""
-        return self._clock_reset
-
-    @clock_reset.setter
-    def clock_reset(self, value: bool) -> None:
-        self._clock_reset = value
-
-    @property
-    def solar(self) -> tuple[dt_time, dt_time] | None:
-        """Return today's (sunrise, sunset), or None if not available."""
-        return self._solar
-
-    @solar.setter
-    def solar(self, value: tuple[dt_time, dt_time] | None) -> None:
-        self._solar = value
 
     @property
     def has_key(self) -> bool:
@@ -312,7 +289,7 @@ class PowerViewBLE:
             + cmd[1]
         )
         LOGGER.debug("sending cmd: %s", tx_data.hex(" "))
-        if self._cipher is not None and self._is_encrypted:
+        if self._cipher is not None and self.encrypted:
             enc: AEADEncryptionContext = self._cipher.encryptor()
             tx_data = enc.update(tx_data) + enc.finalize()
             LOGGER.debug("  encrypted: %s", tx_data.hex(" "))
@@ -557,7 +534,7 @@ class PowerViewBLE:
     def _notification_handler(self, _sender, data: bytearray) -> None:
         LOGGER.debug("%s received BLE data: %s", self.name, data.hex(" "))
         self._data = bytes(data)
-        if self._cipher is not None and self._is_encrypted:
+        if self._cipher is not None and self.encrypted:
             dec: AEADDecryptionContext = self._cipher.decryptor()
             self._data = bytes(dec.update(bytes(data)) + dec.finalize())
             LOGGER.debug(
@@ -580,7 +557,7 @@ class PowerViewBLE:
         what a G3 gateway does and what an install without one would
         otherwise never get.
         """
-        if self._clock_reset is not False:
+        if self.clock_reset is not False:
             return True  # asked for it, or no advertisement decoded yet
         if self._last_time_set == 0.0:
             return True  # nothing set this session, so establish a baseline
@@ -599,7 +576,7 @@ class PowerViewBLE:
         Failure is not the caller's problem: this is an unsolicited extra, so
         it must never take down the command the caller actually asked for.
         """
-        if self._is_encrypted and self._cipher is None:
+        if self.encrypted and self._cipher is None:
             return  # would put plaintext on the wire; the shade would ignore it
         if not self._clock_due():
             LOGGER.debug("%s: clock still current, not resending", self.name)
@@ -626,7 +603,7 @@ class PowerViewBLE:
         # a reconnect that lands before the next advertisement from sending
         # a second update it does not need.
         self._last_time_set = time.monotonic()
-        self._clock_reset = False
+        self.clock_reset = False
         LOGGER.debug("%s: clock set to %s", self.name, now.isoformat())
         await self._set_solar()
 
@@ -642,9 +619,9 @@ class PowerViewBLE:
         power loss, one extra round trip on the connections that already
         carry a clock write.
         """
-        if self._solar is None:
+        if self.solar is None:
             return
-        sunrise, sunset = self._solar
+        sunrise, sunset = self.solar
         payload: Final[bytes] = bytes(
             [
                 sunrise.hour,
