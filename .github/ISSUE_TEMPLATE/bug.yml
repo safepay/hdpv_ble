@@ -24,7 +24,7 @@ body:
     description: |
       From the shade's device page in Home Assistant, **⋮ → Download diagnostics**, then drag the file into this box.
 
-      This is the single most useful thing you can attach: it carries the shade's type, capability flags, the raw Bluetooth advertisement and the decoded state. The home key is redacted, but the shade's name and serial number are not — if you would rather not post those, and you have a G3 hub, run [`scripts/shade_report.py`](https://github.com/safepay/hdpv_ble/blob/main/scripts/shade_report.py) and paste its output instead.
+      This is the single most useful thing you can attach: it carries the shade's type, capability flags, the raw Bluetooth advertisement and the decoded state. The home key, home ID and serial number are redacted, but the shade's own name is not — if you would rather not post that, and you have a G3 hub, run [`scripts/shade_report.py`](https://github.com/safepay/hdpv_ble/blob/main/scripts/shade_report.py) and paste its output instead.
 
       If you can't produce either, say so here and why.
   validations:
