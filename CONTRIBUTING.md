@@ -20,13 +20,35 @@ Add a diagnostics download from the shade's device page (**⋮ → Download
 diagnostics**) and [open an issue](https://github.com/safepay/hdpv_ble/issues/new?template=bug.yml)
 with both files.
 
-Note that PR's submitted WITHOUT logs and diagnostics will not be considered.
+Note that PRs submitted WITHOUT logs and diagnostics will not be considered.
 
-Diagnostics carry the raw advertisement bytes and GATT replies, with the home key
-and serial numbers redacted. What they can't capture is anything physical —
-whether the shade runs on a battery, which fabric moved, which way it went. Put
-that in the issue text. For an unsupported shade, include its type ID from
-*product info → type ID* in the PowerView app.
+Diagnostics carry the raw advertisement bytes and GATT replies, with the home
+key, home ID and serial numbers redacted; the shade's own name is not. What they
+can't capture is anything physical — whether the shade runs on a battery, which
+fabric moved, which way it went. Put that in the issue text. For an unsupported
+shade, include its type ID from *product info → type ID* in the PowerView app.
+
+## Adding or changing shade support
+
+Which entities a shade gets is chosen from its type ID alone, and nothing in CI
+can check that choice: there is no test suite, and the integration is passive, so
+a shade cannot be asked what it is. A wrong entry ships a control with nothing
+behind it, which is worse than leaving the type unsupported.
+
+A change to `SHADE_TYPE` or `SHADE_CAPABILITIES` therefore needs one of:
+
+- A diagnostics download from that type, and a line saying what physically moved
+  when you operated the shade — diagnostics can't capture that part.
+- A source that classifies the type independently: [`aiopvapi`](https://github.com/sander76/aio-powerview-api),
+  which the capability table otherwise mirrors, or openHAB's database, where
+  types 39 and 103 came from.
+
+A product name is not evidence. Type 10 had its position reported and driven
+inverted for a while because it is called SkyLift.
+
+AI-assisted pull requests are fine, but the hardware claim has to be yours. If
+you haven't operated the shade yourself, say so — an unverified mapping is still
+worth an issue, and it will be taken on those terms.
 
 ## Development
 
