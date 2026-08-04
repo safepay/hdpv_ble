@@ -208,6 +208,8 @@ For anything non-obvious:
 
 Diagnostics include the decoded shade state and capability flags with the home
 key redacted, which is usually enough to identify a problem without a round trip.
+Both files are required — see [CONTRIBUTING.md](CONTRIBUTING.md) for what else to
+include, particularly the physical detail diagnostics can't capture.
 
 ## Known issues
 
@@ -239,6 +241,19 @@ Operating the shade once from the vendor app clears it. Doing the same directly
 from Home Assistant is not yet possible — see
 [#5](https://github.com/safepay/hdpv_ble/issues/5).
 </details>
+
+## Contributing
+
+Every shade the maintainer owns is hardwired, so data from other shades is the
+most useful contribution there is — battery-powered shades
+([#23](https://github.com/safepay/hdpv_ble/issues/23)) and dual-fabric shades
+([#13](https://github.com/safepay/hdpv_ble/issues/13)) especially, both of which
+need nothing more than a diagnostics download to settle.
+
+Read [CONTRIBUTING.md](CONTRIBUTING.md) before opening an issue or a pull
+request. Reports and pull requests without a debug log and a diagnostics download
+will not be considered, and a change to which entities a shade type gets needs
+evidence from the shade itself — a product name is not evidence.
 
 ## Credits
 
