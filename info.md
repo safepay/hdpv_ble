@@ -65,7 +65,19 @@ Both are stored with the config entry and persist across updates. Use
 Check your shade's type ID against the
 [supported shades table](https://github.com/safepay/hdpv_ble#supported-shades);
 the PowerView app shows it under *product info → type ID*. If yours isn't listed,
-[open an issue](https://github.com/safepay/hdpv_ble/issues) with the type ID and
-a diagnostics download.
+open an issue with the type ID and a diagnostics download.
+
+## Reporting a problem, or contributing
+
+Every shade the maintainer owns is hardwired, so reports from other shades are
+what move this integration forward — battery shades and dual-fabric (Duolite)
+shades especially.
+
+**Read
+[CONTRIBUTING.md](https://github.com/safepay/hdpv_ble/blob/main/CONTRIBUTING.md)
+before opening an issue or a pull request.** Its requirements are not optional: a
+report needs a debug log and a diagnostics download, pull requests submitted
+without them will not be considered, and a change to which entities a shade type
+gets needs evidence from the shade itself.
 
 Full documentation: [safepay/hdpv_ble](https://github.com/safepay/hdpv_ble)
