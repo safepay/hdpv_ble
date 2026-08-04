@@ -1,6 +1,6 @@
 {
   "name": "Hunter Douglas PowerView (BLE)",
-  "render_readme": true,
+  "render_readme": false,
   "content_in_root": false,
   "homeassistant": "2024.8.0"
 }
