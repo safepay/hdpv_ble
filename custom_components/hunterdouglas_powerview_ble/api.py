@@ -156,9 +156,21 @@ def get_shade_capabilities(type_id: int | None) -> ShadeCapability:
 OPEN_POSITION: Final[int] = 100
 CLOSED_POSITION: Final[int] = 0
 
-# Wire sentinel meaning "leave this axis where it is". Sent verbatim -- for
-# pos1/pos2 that means skipping the *100 fixed-point scaling a real lift
-# position would get; pos3 and tilt are unscaled either way.
+# Wire sentinel meaning "leave this axis where it is". Sent verbatim, which for
+# pos2 means skipping the *100 fixed-point scaling a real lift position would
+# get; pos3 and tilt are unscaled either way.
+#
+# Not usable in pos1: set_position scales that axis unconditionally, so passing
+# it here raises OverflowError rather than reaching the shade. No caller does,
+# and it is left that way deliberately -- 0x8000 is confirmed on hardware for
+# pos2 and pos3 (it is what every tilt command already sends) but never
+# attempted in pos1, and the emulator does not implement the sentinel at all,
+# so there is nothing to check an assumption against.
+#
+# Worth settling: aiopvapi and Home Assistant's own hub integration send a tilt
+# with no lift axis at all, and this sentinel is the wire equivalent of that
+# omission. If it works in pos1, the tilt path need not restate a lift position
+# it has to go looking for -- which is what issue #29 turned on.
 KEEP_POSITION: Final[int] = 0x8000
 
 
