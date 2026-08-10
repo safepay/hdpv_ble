@@ -296,7 +296,13 @@ class PowerViewBLE:
         self._data_event.clear()
         await self._client.write_gatt_char(UUID_TX, tx_data, False)
         seq = self._seqcnt
-        self._seqcnt += 1
+        # The seq field is one byte and the shade echoes one byte back, so the
+        # counter has to stay inside it. Left unbounded it reached 256 after
+        # 255 transactions and the bytes() above raised ValueError from then
+        # on, killing every command on that shade until the entry was
+        # reloaded. Cycles 1..255: nothing says 0 is invalid, but the counter
+        # has always started at 1 and there is no reason to find out.
+        self._seqcnt = self._seqcnt % 0xFF + 1
         await asyncio.wait_for(self._wait_event(), timeout=TIMEOUT)
         return seq
 
