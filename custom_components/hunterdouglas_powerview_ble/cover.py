@@ -159,9 +159,22 @@ class PowerViewCoverBase(PassiveBluetoothCoordinatorEntity[PVCoordinator], Cover
         self._target_position = None
 
     def _fresh_position(self, key: str) -> int | None:
-        """Return the rounded ``key`` position, or None if stale/absent."""
-        if not self._coord.data_available:
-            return None
+        """Return the rounded ``key`` position, or None if stale/absent.
+
+        For what this entity *reports*: a shade we have not heard from in a
+        while must say unknown rather than keep publishing an old reading.
+        """
+        return self._last_position(key) if self._coord.data_available else None
+
+    def _last_position(self, key: str) -> int | None:
+        """Return the rounded ``key`` position however old, or None if absent.
+
+        For what this entity *sends*. Every position command has to restate
+        the axes it is not moving, and the last reading is the best value
+        there is for them -- the shade does not move on its own. Refusing to
+        build the command instead left tilt-only shades with no working
+        control at all once their reading aged out.
+        """
         pos = self._coord.data.get(key)
         return round(pos) if pos is not None else None
 
@@ -191,7 +204,7 @@ class PowerViewCoverBase(PassiveBluetoothCoordinatorEntity[PVCoordinator], Cover
         the *device* reading that belongs on the wire -- not this entity's
         possibly inverted or remapped view of it.
         """
-        pos1 = self._fresh_position(ATTR_CURRENT_POSITION)
+        pos1 = self._last_position(ATTR_CURRENT_POSITION)
         return None if pos1 is None else ShadeMove(pos1=pos1, tilt=target)
 
     async def _async_send_move(self, move: ShadeMove, description: str) -> bool:
@@ -217,14 +230,25 @@ class PowerViewCoverBase(PassiveBluetoothCoordinatorEntity[PVCoordinator], Cover
 
     async def _async_move_to(self, target: float) -> None:
         """Move the shade to a Home Assistant facing position."""
-        clamped = self._clamp_cover_limit(round(target))
+        requested = round(target)
+        clamped = self._clamp_cover_limit(requested)
         if clamped is None:
+            LOGGER.debug(
+                "%s: dropping move to %i%%, cannot check the interlocking rail",
+                self._coord.name,
+                requested,
+            )
             return
         if self.current_cover_position == clamped and not (
             self.is_closing or self.is_opening
         ):
             return
         if (move := self._get_shade_move(clamped)) is None:
+            LOGGER.debug(
+                "%s: dropping move to %i%%, no position to restate",
+                self._coord.name,
+                clamped,
+            )
             return
         self._target_position = clamped
         if not await self._async_send_move(move, f"move to {clamped}%"):
@@ -293,6 +317,11 @@ class PowerViewCoverTiltBase(PowerViewCoverBase):
         if self.current_cover_tilt_position == target_position:
             return
         if (move := self._get_shade_tilt(target_position)) is None:
+            LOGGER.debug(
+                "%s: dropping tilt to %i%%, no lift position to restate",
+                self._coord.name,
+                target_position,
+            )
             return
         await self._async_send_move(move, f"tilt to {target_position}%")
 
@@ -349,6 +378,18 @@ class PowerViewCoverTiltOnly(PowerViewCoverTilt):
         | CoverEntityFeature.STOP_TILT
         | CoverEntityFeature.SET_TILT_POSITION
     )
+
+    @callback
+    def _get_shade_tilt(self, target: int) -> ShadeMove:
+        """Build the move without consulting a lift axis this shade lacks.
+
+        The inherited hook restates the lift position because most shades
+        have one; here it is always 0 and carries no information. Every
+        feature this entity exposes routes through this hook, so one that can
+        decline would leave the shade with nothing but Stop -- hence the
+        narrowed return type: this one never declines.
+        """
+        return ShadeMove(pos1=CLOSED_POSITION, tilt=target)
 
     @property
     def is_opening(self) -> bool | None:  # type: ignore[reportIncompatibleVariableOverride]
@@ -484,8 +525,12 @@ class PowerViewCoverTDBUTop(PowerViewCoverBase):
 
     @callback
     def _get_shade_move(self, target: int) -> ShadeMove | None:
-        """Restate the top rail unchanged and drive position2 to the target."""
-        top_rail_raw = self._fresh_position(ATTR_CURRENT_POSITION)
+        """Restate the top rail unchanged and drive position2 to the target.
+
+        Restating takes the last reading, not a fresh one; the clamp above is
+        where a genuinely unknown rail stops the move.
+        """
+        top_rail_raw = self._last_position(ATTR_CURRENT_POSITION)
         if top_rail_raw is None:
             return None
         return ShadeMove(pos1=top_rail_raw, pos2=target)
@@ -599,6 +644,11 @@ class PowerViewCoverDuoliteRear(PowerViewCoverDuoliteBase):
 
     @callback
     def _get_shade_move(self, target: int) -> ShadeMove | None:
-        """Restate the front fabric unchanged and drive position2."""
-        front = self._front_position
+        """Restate the front fabric unchanged and drive position2.
+
+        Deliberately not ``_front_position``: that is the reporting view,
+        which withholds a stale reading, and restating an axis wants the last
+        reading there is.
+        """
+        front = self._last_position(ATTR_CURRENT_POSITION)
         return None if front is None else ShadeMove(pos1=front, pos2=target)

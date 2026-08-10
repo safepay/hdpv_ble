@@ -33,8 +33,8 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
     _DEV_INFO_RETRY_S: Final[float] = 60
 
     # Position/battery come only from V2 adverts. Past this many seconds without
-    # a fresh V2 record we stop reporting the retained sample as current, so an
-    # out-of-range shade doesn't keep showing a stale position.
+    # HA hearing from the shade at all we stop reporting the retained sample as
+    # current, so an out-of-range shade doesn't keep showing a stale position.
     _STALE_AFTER_S: Final[float] = 300.0
 
     def __init__(
@@ -53,7 +53,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         )
         self.api = PowerViewBLE(ble_device, home_key)
         self.data: dict[str, int | float | bool] = {}
-        self._last_v2_at: float = 0.0
+        self._v2_seen: bool = False
         self._manuf_dat = data.get("manufacturer_data")
         self.dev_details: dict[str, str] = {}
         self.velocity: int = 0
@@ -94,17 +94,26 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
 
     @property
     def data_available(self) -> bool:
-        """Whether the last V2 advertisement is recent enough to trust.
+        """Whether the retained V2 sample is recent enough to trust.
 
-        Position, tilt and battery are only carried in V2 adverts. An
-        out-of-range shade stops sending them while HA may still consider the
-        device present, so past ``_STALE_AFTER_S`` we no longer report the
-        retained sample as current.
+        Position, tilt and battery are only carried in V2 adverts, so an
+        out-of-range shade must stop reporting its retained sample as current.
+
+        Age is measured against Home Assistant's own last-seen time, not
+        against when we were last handed an advertisement: habluetooth drops
+        an advertisement identical to the previous one before any listener
+        sees it, and a stationary shade repeats the same nine bytes
+        indefinitely, so a perfectly healthy shade can go hours without
+        dispatching a single event. Timing our own events instead declared
+        every idle shade stale after five minutes.
         """
-        return (
-            self._last_v2_at != 0.0
-            and time.monotonic() - self._last_v2_at < self._STALE_AFTER_S
+        if not self._v2_seen:
+            return False  # nothing decoded yet, so there is no sample to age
+        info = bluetooth.async_last_service_info(
+            self.hass, self.address, connectable=True
         )
+        # Same monotonic clock as time.monotonic(), just the coarse variant.
+        return info is not None and time.monotonic() - info.time < self._STALE_AFTER_S
 
     async def query_dev_info(self) -> None:
         """Fetch device info over GATT and push into the device registry.
@@ -243,11 +252,13 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
                 # and what solar times ride along with it.
                 self.api.clock_reset = bool(decoded.get("reset_clock"))
                 self.api.solar = self._solar_times()
-                self._last_v2_at = time.monotonic()
+                self._v2_seen = True
                 self._maybe_refresh_dev_info()
 
-        if new_data == self.data:
-            return
-        self.data = new_data
-        LOGGER.debug("data sample %s", self.data)
+        if new_data != self.data:
+            self.data = new_data
+            LOGGER.debug("data sample %s", self.data)
+        # Handed on even when nothing changed: the super() call is the only
+        # thing that marks the coordinator available again, so a shade coming
+        # back with exactly the advertisement it left on must not be skipped.
         super()._async_handle_bluetooth_event(service_info, change)
