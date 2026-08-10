@@ -349,21 +349,23 @@ class PowerViewCoverTilt(PowerViewCoverTiltBase):
 
 
 class PowerViewCoverTiltOnClosed(PowerViewCoverTilt):
-    """Representation of a PowerView shade whose tilt is only available when closed.
+    """Representation of a PowerView shade whose tilt only engages when closed.
 
-    Examples: Pirouette (type 18), Twist (type 44).
+    Pirouette (18), Silhouette (23, 72), Facette (43), Twist (44).
 
-    If a tilt command arrives while the shade is open, the shade is closed first
-    so the tilt mechanism is engaged before the command is sent.
+    The vanes only engage at the closed position, but that is a fact about the
+    hardware rather than something the integration has to arrange: the tilt is
+    sent as asked and the shade does what it can with it. aiopvapi registers
+    these under ShadeBottomUpTiltOnClosed90/180, and neither it nor Home
+    Assistant's own hub integration drives the lift axis before tilting --
+    `PowerViewShadeWithTiltOnClosed` overrides position properties only.
+
+    This class previously closed the shade first and returned, which sent the
+    lift command and dropped the tilt target on the floor, so a single service
+    call never tilted anything. Worse, `current_cover_position` is None until
+    an advertisement decodes, and None != CLOSED_POSITION, so a tilt arriving
+    before the first advert closed the shade instead of tilting it.
     """
-
-    async def async_set_cover_tilt_position(self, **kwargs: Any) -> None:
-        """Move the tilt to a specific position, closing first if needed."""
-        if self.current_cover_position != CLOSED_POSITION:
-            LOGGER.debug("tilt-on-closed: closing shade before tilting")
-            await self._async_move_to(CLOSED_POSITION)
-            return
-        await super().async_set_cover_tilt_position(**kwargs)
 
 
 class PowerViewCoverTiltOnly(PowerViewCoverTilt):
