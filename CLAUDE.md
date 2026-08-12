@@ -11,9 +11,9 @@ rule; anything placed there is local-only and will never appear in a commit.
 ## Provenance
 
 This is a hard fork of [`patman15/hdpv_ble`](https://github.com/patman15/hdpv_ble),
-detached from the fork network on 2026-08-01 because upstream stopped merging
-pull requests. Upstream's last commit to `main` was 2026-01-01 and this repo is
-a strict superset of it — there are no divergent upstream commits to merge.
+detached from the fork network on 2026-08-01. Upstream's last commit to `main`
+was 2026-01-01 and this repo is a strict superset of it — there are no divergent
+upstream commits to merge.
 
 The `upstream` remote is kept for **reference only**, not for merging. When
 reworking something, `git diff upstream/main -- <path>` and
@@ -27,8 +27,8 @@ notice of the change.
 
 **Never add a Claude signature to commits or pull requests.** Specifically, do
 not append `Co-Authored-By: Claude ...`, `🤖 Generated with [Claude Code]`, or
-any equivalent attribution trailer or footer. Commit messages and PR bodies
-should read as if written by the maintainer.
+any equivalent attribution trailer or footer. Commit messages and PR bodies are
+the maintainer's own.
 
 - Never commit directly to `main`. Branch first, then merge via pull request.
 - Branch names: `<type>/<kebab-case-summary>`, e.g. `fix/tilt-on-closed-position`.
