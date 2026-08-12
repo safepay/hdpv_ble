@@ -1,2 +1,6 @@
 # Auto detect text files and perform LF normalization
 * text=auto
+
+# Shell scripts must keep LF even on a Windows checkout - CRLF breaks the
+# shebang line on the Linux hosts they are written for.
+*.sh text eol=lf

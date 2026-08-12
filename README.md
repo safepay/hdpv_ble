@@ -106,7 +106,13 @@ are three ways to obtain it:
    the emulated shade from the app.
 2. **Extract it from a gateway.** [`scripts/extract_gateway3_homekey.py`](scripts/extract_gateway3_homekey.py)
    pulls the key from a working PowerView gateway.
-3. **Recover it from the app.** See [this community forum post](https://community.home-assistant.io/t/hunter-douglas-powerview-gen-3-integration/424836/228).
+3. **Recover it from the app.** The key sits in the PowerView app's own database,
+   so running the app under Android on a PC gets you to it —
+   [`scripts/extract_homekey_waydroid.sh`](scripts/extract_homekey_waydroid.sh)
+   walks through installing Waydroid, sideloading the app and reading the key
+   out. Tested on Ubuntu 24.04 only. There is also
+   [this community forum post](https://community.home-assistant.io/t/hunter-douglas-powerview-gen-3-integration/424836/228)
+   describing the manual route.
 
 ### Connecting a hub
 
