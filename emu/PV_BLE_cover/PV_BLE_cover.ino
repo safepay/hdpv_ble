@@ -18,12 +18,14 @@
 
 #define NAME "myPVcover"
 const uint16_t SW_VERSION = 391;
-const char *SERIAL_NR = "01234567890ABCDEF";
+// Must match bytes 2..9 of the selector-5 product-info response below,
+// represented there as an eight-byte little-endian value.
+const char *SERIAL_NR = "525C5D59429AA2D1";
 const uint16_t TYP_ID = 42; // 62
 const uint16_t MODEL_ID = 224;
 const uint16_t FW_REVISION = 27;
 const uint32_t HW_REVISION = 171103;
-const uint8_t BATTERY_LEVEL = 42;
+const uint8_t BATTERY_LEVEL = 100;
 
 #include <BLEDevice.h>
 #include <BLEServer.h>
@@ -188,8 +190,10 @@ void decode(BLECharacteristic *pChar) {
     case 0xF701:
       // set position
       struct position pos;
-      memcpy((void *)&pos, &data_dec[4], msg.data_len);
+      memset(&pos, 0, sizeof(pos));
+      memcpy((void *)&pos, &data_dec[4], min(msg.data_len, (uint8_t)sizeof(pos)));
       Serial.printf("set position: pos1 %f%%, pos2 %d, pos3 %d, tilt %d, velocity %d\n", pos.pos1 / 100.0, pos.pos2, pos.pos3, pos.tilt, pos.velocity);
+      resp_size = set_response(&response, (const message *)data_dec);
       break;
     case 0xF711:
       // identify
@@ -199,10 +203,12 @@ void decode(BLECharacteristic *pChar) {
     case 0xF7B8:
       // stop movement
       Serial.println("stop.");
+      resp_size = set_response(&response, (const message *)data_dec);
       break;
     case 0xF7BA:
       // activate scene
       Serial.printf("activate scene #%i\n", data_dec[4]);
+      resp_size = set_response(&response, (const message *)data_dec);
       break;
     case 0xFA5A:
       // set scene
@@ -245,10 +251,28 @@ void decode(BLECharacteristic *pChar) {
       Serial.printf("set shade configuration: 0x%02X, status LED: %s\n", data_dec[4], data_dec[5] ? "on" : "off");
       resp_size = set_response(&response, (const message *)data_dec);
       break;
+    case 0xFF12:
+      // This is an asynchronous call. The protocol has two notifications,
+      // an immediate success ACK followed by the data response
+      Serial.println("get mac address.");
+      {
+        message ack;
+        const uint8_t ack_size = set_response(&ack, (const message *)data_dec);
+        pChar->setValue((uint8_t *)&ack, ack_size);
+        pChar->notify();
+        delay(25);
+      }
+      // The six MAC bytes are at response offsets 14..19
+      resp_size = set_response(&response, (const message *)data_dec, ret_valFFDD, sizeof(ret_valFFDD));
+      break;
     case 0xFFDD:
       // get HW diagnostics
       Serial.println("get HW diagnostics.");
-      resp_size = set_response(&response, (const message *)data_dec, ret_valFFDD, sizeof(ret_valFFDD));
+      if (msg.data_len == 1 && data_dec[4] == 0x04) {
+        resp_size = set_response(&response, (const message *)data_dec, ret_valF1DD, sizeof(ret_valF1DD));
+      } else {
+        resp_size = set_response(&response, (const message *)data_dec, ret_valFFDD, sizeof(ret_valFFDD));
+      }
       break;
     case 0xFFDE:
       // get power status
@@ -267,7 +291,7 @@ void decode(BLECharacteristic *pChar) {
     default:
       Serial.println(F("*********************************** unknown message (try ACK)"));
       resp_size = set_response(&response, (const message *)data_dec);
-      break;      
+      break;
   }
   if (resp_size) {
     pChar->setValue((uint8_t *)&response, resp_size);
@@ -289,9 +313,15 @@ class MyServerCallbacks : public BLEServerCallbacks {
     deviceConnected = false;
   }
 
+  #if defined(CONFIG_NIMBLE_ENABLED)
+  void onMtuChanged(BLEServer *pServer, ble_gap_conn_desc *desc, uint16_t mtu) {
+    Serial.printf("MTU changed: %d\n", mtu);
+  }
+  #else
   void onMtuChanged(BLEServer *pServer, esp_ble_gatts_cb_param_t *param) {
     Serial.printf("MTU changed: %d\n", pServer->getPeerMTU(pServer->getConnId()));
   }
+  #endif
 };
 
 class coverCallbacks : public BLECharacteristicCallbacks {
@@ -357,7 +387,10 @@ class genericCallbacks : public BLECharacteristicCallbacks {
 
 void setup() {
   Serial.begin(115200);
-  delay(1000);  // wait for terminal to be ready
+  const unsigned long serial_wait_deadline = millis() + 10000;
+  while (!Serial && millis() < serial_wait_deadline) {
+    delay(10);
+  }
   Serial.println(NAME " initializing ...");
 
   BLEDevice::init(NAME);
@@ -455,8 +488,15 @@ pDesc1->setValue("cover");*/
 
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
 
-  pAdvertising->setAdvertisementData(AdvertisementData);
-  BLEDevice::startAdvertising();
+  // The manufacturer data and 128-bit service UUID use all 31 bytes of the
+  // advertising packet. Put the device name in the separate scan response so
+  // active scanners can discover myPVcover
+  BLEAdvertisementData ScanResponseData;
+  ScanResponseData.setName(NAME);
+
+  const bool advertisementDataSet = pAdvertising->setAdvertisementData(AdvertisementData);
+  const bool scanResponseDataSet = pAdvertising->setScanResponseData(ScanResponseData);
+  const bool advertisingStarted = pAdvertising->start();
 
   Serial.println("Device " NAME " ready.");
 }
