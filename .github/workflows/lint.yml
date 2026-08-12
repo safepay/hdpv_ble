@@ -5,6 +5,9 @@ on:
   # checks the merge result, so there is no push trigger: it would only re-run
   # what was just validated. Use workflow_dispatch to check main on demand.
   pull_request:
+    # ruff and mypy only read Python, so this filter is safe for them. Anything
+    # that reads the whole repository must not live in this workflow - see
+    # codespell.yml, which is unfiltered for that reason.
     paths:
       - '**.py'
       - 'requirements.txt'
@@ -41,6 +44,3 @@ jobs:
 
       - name: Run mypy
         run: mypy .
-
-      - name: Run codespell
-        run: codespell -L hass

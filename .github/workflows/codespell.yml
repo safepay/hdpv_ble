@@ -1,0 +1,43 @@
+name: Codespell
+
+on:
+  # Nothing reaches main except through a pull request, and the PR run already
+  # checks the merge result, so there is no push trigger: it would only re-run
+  # what was just validated. Use workflow_dispatch to check main on demand.
+  pull_request:
+    # Deliberately no paths filter. codespell reads every text file in the
+    # repository, so it lives here rather than in lint.yml, whose filter would
+    # skip it for exactly the documentation and script changes it is best at
+    # catching. Being unfiltered, this check is also safe to mark required.
+    #
+    # Keep the arguments in step with the ones CLAUDE.md tells contributors to
+    # run locally; codespell itself comes from requirements.txt there.
+  workflow_dispatch:
+
+permissions: {}
+
+# A second push to a PR cancels the run still in flight for the first.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  codespell:
+    name: Check spelling
+    runs-on: "ubuntu-latest"
+    steps:
+      - name: Checkout the repository
+        uses: "actions/checkout@v7"
+
+      - name: Set up Python
+        uses: actions/setup-python@v7
+        with:
+          python-version: "3.13.2"
+
+      # Installed directly rather than from requirements.txt: this job needs no
+      # Home Assistant, and codespell is unpinned there in any case.
+      - name: Install codespell
+        run: python3 -m pip install codespell
+
+      - name: Run codespell
+        run: codespell -L hass
