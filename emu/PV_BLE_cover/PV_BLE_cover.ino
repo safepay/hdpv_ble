@@ -18,7 +18,7 @@
 
 #define NAME "myPVcover"
 const uint16_t SW_VERSION = 391;
-// Must match bytes 2..9 of the selector-5 product-info response below,
+// Must match bytes 2..9 of the selector-5 hardware-diagnostics response below,
 // represented there as an eight-byte little-endian value.
 const char *SERIAL_NR = "525C5D59429AA2D1";
 const uint16_t TYP_ID = 42; // 62
@@ -494,9 +494,11 @@ pDesc1->setValue("cover");*/
   BLEAdvertisementData ScanResponseData;
   ScanResponseData.setName(NAME);
 
-  const bool advertisementDataSet = pAdvertising->setAdvertisementData(AdvertisementData);
-  const bool scanResponseDataSet = pAdvertising->setScanResponseData(ScanResponseData);
-  const bool advertisingStarted = pAdvertising->start();
+  // These return void on ESP32 board definitions before 3.2.0, so ignore the
+  // result rather than assigning it; the sketch still builds on 3.0.x.
+  pAdvertising->setAdvertisementData(AdvertisementData);
+  pAdvertising->setScanResponseData(ScanResponseData);
+  pAdvertising->start();
 
   Serial.println("Device " NAME " ready.");
 }
