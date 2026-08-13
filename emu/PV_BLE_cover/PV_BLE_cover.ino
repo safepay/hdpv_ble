@@ -176,6 +176,9 @@ void decode(BLECharacteristic *pChar) {
 
   // special responses (static data!)
   const byte ret_valF1DD[] = { 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x87, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };                                                                                                                                                // product info
+  // FF12 expects a MAC address at bytes 14..19. Accounting for the
+  // 4-byte header, the static MAC address is modeled at bytes 10..15 below
+  const byte ret_valFF12[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0xab, 0xcd, 0xef };
   const byte ret_valFFDD[] = { 0x00, 0x05, 0xd1, 0xa2, 0x9a, 0x42, 0x59, 0x5d, 0x5c, 0x52, 0x1b, 0x00, 0x00, 0x00, (uint8_t)(SW_VERSION & 0xFF), (uint8_t)(SW_VERSION >> 8), 0x00, 0x00, 0x5f, 0x9c, 0x02, 0x00, 0x5f, 0x9c, 0x02, 0x00, TYP_ID, MODEL_ID, 0x08 };  // HW diagnostics
   const byte ret_valFFDE[] = { 0x08, 0x00, 0x02, 0x26, 0x72, 0x01, 0x59, 0x01, 0x00 };                                                                                                                                                                              // power status
   const byte ret_valFA5B[] = { 0x00, 0x0a, 0xa2, 0x88, 0x13, 0x00, 0x80, 0x00, 0x80, 0x00, 0x80, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };                                                                                                                        // get scene
@@ -262,8 +265,7 @@ void decode(BLECharacteristic *pChar) {
         pChar->notify();
         delay(25);
       }
-      // The six MAC bytes are at response offsets 14..19
-      resp_size = set_response(&response, (const message *)data_dec, ret_valFFDD, sizeof(ret_valFFDD));
+      resp_size = set_response(&response, (const message *)data_dec, ret_valFF12, sizeof(ret_valFF12));
       break;
     case 0xFFDD:
       // get HW diagnostics
