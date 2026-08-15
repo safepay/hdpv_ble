@@ -2,7 +2,8 @@
 
 Dumps every signal the integration holds for each shade, decoded as little as
 possible: the advertisement bytes, the shade's replies to its GATT queries, the
-hub's record, plus device, capability and connectivity state. It is meant to be
+hub's record, the entities the shade produced, plus device, capability and
+connectivity state. It is meant to be
 attached to a bug report, whatever the bug is — position and tilt, range and
 connectivity, encryption and control failures, the reset/reinit flags, or a
 shade's power source.
@@ -23,9 +24,11 @@ from bleak.exc import BleakError
 
 from homeassistant.components import bluetooth
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
+from homeassistant.components.cover import CoverEntityFeature
+from homeassistant.const import ATTR_SUPPORTED_FEATURES, Platform
 from homeassistant.core import HomeAssistant
+from homeassistant.helpers import device_registry as dr, entity_registry as er
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
-from homeassistant.helpers.device_registry import DeviceEntry
 from homeassistant.helpers.redact import async_redact_data
 
 from . import ConfigEntryType
@@ -133,6 +136,55 @@ def _capabilities(coord: PVCoordinator) -> dict[str, bool]:
     }
 
 
+def _entities(hass: HomeAssistant, coord: PVCoordinator) -> list[dict[str, Any]]:
+    """Return the entities this shade produced, and what they currently report.
+
+    Every other block here describes what the integration believes about a
+    shade. This one describes what came out the other end, because "the
+    controls disappeared" has three quite different causes that are otherwise
+    indistinguishable: an entity never created because the type ID picked the
+    wrong `cover.py` subclass, one created and then disabled or hidden in the
+    registry, and one present and enabled that offers no features at all --
+    which is how an encrypted shade with no home key looks from the outside.
+
+    An empty list is itself the first of those answers.
+    """
+    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, coord.address)})
+    if device is None:
+        return []
+
+    registry = er.async_get(hass)
+    entities: list[dict[str, Any]] = []
+    for entry in er.async_entries_for_device(
+        registry, device.id, include_disabled_entities=True
+    ):
+        state = hass.states.get(entry.entity_id)
+        record: dict[str, Any] = {
+            "entity_id": entry.entity_id,
+            "unique_id": entry.unique_id,
+            "domain": entry.domain,
+            # StrEnum members, and this ends up as JSON.
+            "disabled_by": entry.disabled_by.value if entry.disabled_by else None,
+            "hidden_by": entry.hidden_by.value if entry.hidden_by else None,
+            # None where the entity is in the registry but has no state object,
+            # which is what a disabled entity looks like.
+            "state": state.state if state else None,
+        }
+        features = state.attributes.get(ATTR_SUPPORTED_FEATURES) if state else None
+        if features is not None:
+            # Stored as the live IntFlag, not an int.
+            record["supported_features"] = int(features)
+            if entry.domain == Platform.COVER:
+                # The reason this block exists: a cover reporting no features
+                # renders as a shade with a position but no buttons and no
+                # slider, and nothing else in this file would say so.
+                record["supported_feature_names"] = [
+                    flag.name for flag in CoverEntityFeature if flag & features
+                ]
+        entities.append(record)
+    return entities
+
+
 def _connectivity(
     coord: PVCoordinator, service_info: BluetoothServiceInfoBleak | None
 ) -> dict[str, Any]:
@@ -221,6 +273,7 @@ async def _async_shade(
         "address": coord.address,
         "device": _device(coord),
         "capabilities": _capabilities(coord),
+        "entities": _entities(hass, coord),
         "connectivity": _connectivity(coord, service_info),
         "advertisement": _advertisement(coord, service_info),
         "queries": await _async_queries(coord, sem),
@@ -252,7 +305,7 @@ async def async_get_config_entry_diagnostics(
 
 
 async def async_get_device_diagnostics(
-    hass: HomeAssistant, entry: ConfigEntryType, device: DeviceEntry
+    hass: HomeAssistant, entry: ConfigEntryType, device: dr.DeviceEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a single shade."""
     addresses = {ident[1] for ident in device.identifiers if ident[0] == DOMAIN}
@@ -268,6 +321,11 @@ async def async_get_device_diagnostics(
     )
     return {
         "note": _NOTE,
+        # Carried here as well as in the config-entry dump: the README sends
+        # reporters to the shade's device page, so this is the one that
+        # actually gets attached to issues, and whether a home key is
+        # configured at all is usually the first thing worth knowing.
+        "config_entry": async_redact_data(dict(entry.data), TO_REDACT),
         "hub": hub_status,
         "shade": await _async_shade(hass, coord, hub_records, asyncio.Semaphore(1)),
     }
