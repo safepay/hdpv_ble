@@ -27,6 +27,19 @@
           "hub_url": "Base URL of your PowerView G3 hub, e.g. {hub_url_example}",
           "home_key": "32-character hex string (e.g. 0102030405060708090a0b0c0d0e0f10) or \\x escaped format (e.g. \\x01\\x02...)"
         }
+      },
+      "reconfigure": {
+        "title": "Reconfigure PowerView Home",
+        "description": "Change the encryption key or the hub URL. Shades stay where they are and keep their settings. An encrypted shade shows no controls at all until a valid key is configured. Clear the hub URL if you no longer have a PowerView G3 hub.",
+        "data": {
+          "key_method": "Key source",
+          "hub_url": "PowerView hub URL",
+          "home_key": "HomeKey (32 hex characters or \\xNN format)"
+        },
+        "data_description": {
+          "hub_url": "Base URL of your PowerView G3 hub, e.g. {hub_url_example}",
+          "home_key": "32-character hex string (e.g. 0102030405060708090a0b0c0d0e0f10) or \\x escaped format (e.g. \\x01\\x02...)"
+        }
       }
     },
     "error": {
@@ -39,7 +52,8 @@
     },
     "abort": {
       "already_configured": "Device is already configured",
-      "single_instance_allowed": "Already configured. Only a single configuration possible."
+      "single_instance_allowed": "Already configured. Only a single configuration possible.",
+      "reconfigure_successful": "Reconfiguration was successful"
     }
   },
   "entity": {

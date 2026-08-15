@@ -283,24 +283,23 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         Returns True on success, False on validation error (errors dict is populated).
         """
         method = user_input.get("key_method", "skip")
+        # Captured whichever route the key comes by: the hub also supplies the
+        # shades' friendly names, so it is worth keeping even when the key was
+        # typed in or skipped. An emptied field means the user cleared it, and
+        # is the only way to say "no hub".
+        hub_url = user_input.get(CONF_HUB_URL, "").rstrip("/")
+        self._hub_url = hub_url
 
         if method == "skip":
             self._home_key = ""
             return True
 
         if method == "manual":
-            # Still capture a hub URL if the user provided one — the integration
-            # uses it to fetch the shades' friendly names even when the homekey
-            # itself was supplied manually.
-            hub_url = user_input.get(CONF_HUB_URL, "").rstrip("/")
-            if hub_url:
-                self._hub_url = hub_url
             return self._validate_manual_key(user_input, errors)
 
         if method != "hub":
             return False
 
-        hub_url = user_input.get(CONF_HUB_URL, "").rstrip("/")
         try:
             key = await _fetch_key_from_hub(self.hass, hub_url)
         except tuple(_HUB_ERROR_MAP) as ex:
@@ -309,7 +308,6 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return False
 
         self._home_key = key.hex()
-        self._hub_url = hub_url
         return True
 
     async def async_step_bluetooth(
@@ -388,6 +386,42 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         return self._show_homekey_form(
             "zeroconf_confirm", errors, name=self._hub_url
         )
+
+    async def async_step_reconfigure(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Change the home key and hub URL on the existing entry.
+
+        The key is what stands between an encrypted shade and its controls:
+        without one every cover reports an empty feature set, which shows up as
+        a shade with no buttons and no slider. Setting the integration up again
+        was the only other way to supply one, and that discards the entity IDs
+        along with everything customised on them.
+        """
+        entry = self._get_reconfigure_entry()
+        errors: dict[str, str] = {}
+
+        if user_input is None:
+            # Open the form on what is configured now. The key itself is not
+            # pre-filled -- it is a secret, and an empty box asks for a
+            # decision rather than inviting a blind resubmit.
+            self._hub_url = entry.data.get(CONF_HUB_URL, "")
+        elif await self._validate_homekey_input(user_input, errors):
+            # Merged onto the existing data rather than rebuilt, so the cached
+            # friendly names survive. The unique ID is derived from the key, so
+            # it has to move with it.
+            data: dict[str, Any] = {**entry.data, CONF_HOME_KEY: self._home_key}
+            if self._hub_url:
+                data[CONF_HUB_URL] = self._hub_url
+            else:
+                data.pop(CONF_HUB_URL, None)
+            return self.async_update_reload_and_abort(
+                entry,
+                unique_id=_hub_unique_id(self._home_key),
+                data=data,
+            )
+
+        return self._show_homekey_form("reconfigure", errors)
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
