@@ -14,7 +14,7 @@ key by hand and names your shades the way the PowerView app does.
 
 ## Requirements
 
-- Home Assistant 2024.8.0 or newer.
+- Home Assistant 2024.11.0 or newer.
 - A Bluetooth adapter on your Home Assistant host, or one or more
   [ESPHome Bluetooth proxies](https://esphome.io/components/bluetooth_proxy)
   within range of the shades.
@@ -89,8 +89,9 @@ over zeroconf. When Home Assistant finds one, it asks for:
   `0102030405060708090a0b0c0d0e0f10`, or the `\xNN` escaped form.
 - **PowerView hub URL** — optional, e.g. `http://192.168.1.50`.
 
-Both are stored with the config entry and persist across updates. Use
-**Configure** on the integration to change them later.
+Both are stored with the config entry and persist across updates. To change
+them later, open the integration and choose **⋮ → Reconfigure**; the shades keep
+their entity IDs and settings.
 
 ### Getting the home key
 
@@ -202,6 +203,14 @@ Worth knowing, because it explains some of the behaviour:
   by an adapter or proxy at the moment you move it.
 
 ## Troubleshooting
+
+**Shades appear but have no controls.** The shade is encrypted and no valid home
+key is configured, so the cover entity reports its position but offers nothing to
+drive it with. The log says so once per shade, and diagnostics show
+`"encrypted": true` alongside `"home_key_configured": false`. Fix it with
+**⋮ → Reconfigure** on the integration. If the key fetch fails against a
+`.local` hub URL, try the hub's IP address instead — mDNS often does not resolve
+from inside a container.
 
 For anything non-obvious:
 

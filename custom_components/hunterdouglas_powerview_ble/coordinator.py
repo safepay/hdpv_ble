@@ -54,6 +54,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         self.api = PowerViewBLE(ble_device, home_key)
         self.data: dict[str, int | float | bool] = {}
         self._v2_seen: bool = False
+        self._no_key_logged: bool = False
         self._manuf_dat = data.get("manufacturer_data")
         self.dev_details: dict[str, str] = {}
         self.velocity: int = 0
@@ -114,6 +115,23 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         )
         # Same monotonic clock as time.monotonic(), just the coarse variant.
         return info is not None and time.monotonic() - info.time < self._STALE_AFTER_S
+
+    def _warn_if_no_key(self) -> None:
+        """Say once why an encrypted shade will not take commands.
+
+        Nothing else reports it. The cover entities answer an encrypted shade
+        with no key by returning an empty feature set, which renders as a shade
+        with no controls at all and leaves nothing in the log to explain it.
+        """
+        if self._no_key_logged or not self.api.encrypted or self.api.has_key:
+            return
+        self._no_key_logged = True
+        LOGGER.warning(
+            "%s is encrypted and no home key is configured, so it cannot be "
+            "controlled. Add the key from the PowerView Home integration's "
+            "Reconfigure menu",
+            self._friendly_name,
+        )
 
     async def query_dev_info(self) -> None:
         """Fetch device info over GATT and push into the device registry.
@@ -248,6 +266,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
             if decoded:
                 new_data.update(decoded)
                 self.api.encrypted = bool(decoded.get("home_id"))
+                self._warn_if_no_key()
                 # Drives whether the next connection carries a clock update,
                 # and what solar times ride along with it.
                 self.api.clock_reset = bool(decoded.get("reset_clock"))
