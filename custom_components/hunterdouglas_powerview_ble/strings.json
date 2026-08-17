@@ -11,7 +11,7 @@
           "home_key": "HomeKey (32 hex characters or \\xNN format)"
         },
         "data_description": {
-          "hub_url": "Base URL of your PowerView G3 hub, e.g. {hub_url_example}",
+          "hub_url": "Base URL of your PowerView G3 hub, e.g. {hub_url_example}. Leave empty if you do not have one.",
           "home_key": "32-character hex string (e.g. 0102030405060708090a0b0c0d0e0f10) or \\x escaped format (e.g. \\x01\\x02...)"
         }
       },
@@ -24,7 +24,7 @@
           "home_key": "HomeKey (32 hex characters or \\xNN format)"
         },
         "data_description": {
-          "hub_url": "Base URL of your PowerView G3 hub, e.g. {hub_url_example}",
+          "hub_url": "Base URL of your PowerView G3 hub, e.g. {hub_url_example}. Leave empty if you do not have one.",
           "home_key": "32-character hex string (e.g. 0102030405060708090a0b0c0d0e0f10) or \\x escaped format (e.g. \\x01\\x02...)"
         }
       },
@@ -37,7 +37,7 @@
           "home_key": "HomeKey (32 hex characters or \\xNN format)"
         },
         "data_description": {
-          "hub_url": "Base URL of your PowerView G3 hub, e.g. {hub_url_example}",
+          "hub_url": "Base URL of your PowerView G3 hub, e.g. {hub_url_example}. Leave empty if you do not have one.",
           "home_key": "32-character hex string (e.g. 0102030405060708090a0b0c0d0e0f10) or \\x escaped format (e.g. \\x01\\x02...)"
         }
       }
@@ -48,7 +48,8 @@
       "hub_connection_error": "Cannot connect to the PowerView hub",
       "hub_http_error": "Hub returned an HTTP error",
       "hub_timeout": "Connection to hub timed out",
-      "hub_protocol_error": "Hub returned an unexpected response"
+      "hub_protocol_error": "Hub returned an unexpected response",
+      "hub_url_required": "Enter the hub URL, or choose another key source if you do not have a hub"
     },
     "abort": {
       "already_configured": "Device is already configured",
