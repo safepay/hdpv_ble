@@ -345,6 +345,20 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         if self._existing_hub_entry():
             return self.async_abort(reason="already_configured")
 
+        # Only ever one entry, so only ever one prompt. The unique ID above
+        # folds together the shades of one home, but not a second home in
+        # range, and not the gateway flow -- whose ID comes from mDNS and
+        # cannot be made to match. Both used to show their own card.
+        if self._async_in_progress():
+            return self.async_abort(reason="already_in_progress")
+
+        # Without these the frontend labels the card with the integration name
+        # and never reads flow_title, so a Bluetooth discovery was
+        # indistinguishable from any other.
+        self.context["title_placeholders"] = {
+            "name": discovery_info.name or discovery_info.address
+        }
+
         # No hub entry yet — redirect to user setup
         return await self.async_step_user()
 
@@ -372,6 +386,17 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 )
                 self.hass.config_entries.async_schedule_reload(entry.entry_id)
             return self.async_abort(reason="already_configured")
+
+        # A gateway can do everything the Bluetooth prompt can and fetch the
+        # key as well, so it takes over rather than queueing behind one. Only
+        # Bluetooth flows are dropped: a `user` flow means somebody is part way
+        # through the form by hand, and a second gateway would still be a
+        # gateway.
+        for flow in self._async_in_progress(
+            match_context={"source": config_entries.SOURCE_BLUETOOTH}
+        ):
+            LOGGER.debug("Superseding Bluetooth discovery flow %s", flow["flow_id"])
+            self.hass.config_entries.flow.async_abort(flow["flow_id"])
 
         self.context["title_placeholders"] = {"name": host}
         return await self.async_step_zeroconf_confirm()
