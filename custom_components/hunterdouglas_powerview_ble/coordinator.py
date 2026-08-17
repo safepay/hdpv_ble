@@ -45,8 +45,10 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         friendly_name: str | None = None,
     ) -> None:
         """Initialize the shade data coordinator."""
-        assert ble_device.name is not None
-        self._friendly_name = friendly_name or ble_device.name
+        # A shade with no local name in its advertisement is not something we
+        # have seen, but an assert here died inside a fire-and-forget setup
+        # task and took the shade with it. The address is always available.
+        self._friendly_name = friendly_name or ble_device.name or ble_device.address
         home_key_hex: str = data.get(CONF_HOME_KEY, "")
         home_key: bytes = (
             bytes.fromhex(home_key_hex) if len(home_key_hex) == 32 else b""

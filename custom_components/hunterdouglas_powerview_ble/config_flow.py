@@ -172,11 +172,16 @@ _HUB_ERROR_MAP: dict[type[Exception], str] = {
 }
 
 
-def _homekey_schema(hub_url_default: str = _DEFAULT_HUB_URL) -> vol.Schema:
+def _homekey_schema(hub_url_default: str = "") -> vol.Schema:
     """Build the homekey form schema, defaulting the hub URL field.
 
     When a gateway has been discovered via zeroconf, ``hub_url_default`` is the
-    discovered URL so the manual-entry fallback comes pre-filled.
+    discovered URL so the manual-entry fallback comes pre-filled. Otherwise the
+    field starts empty and `_DEFAULT_HUB_URL` appears only as the example in the
+    field's description: pre-filling it meant every user without a gateway
+    submitted the placeholder unchanged and had a hub they do not own recorded
+    on the entry, which then cost a DNS timeout on every reload and reported
+    itself as a configured hub in diagnostics (issue #42).
     """
     return vol.Schema(
         {
@@ -246,7 +251,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Render the key-source form, pre-filling the hub URL when discovered."""
         return self.async_show_form(
             step_id=step_id,
-            data_schema=_homekey_schema(self._hub_url or _DEFAULT_HUB_URL),
+            data_schema=_homekey_schema(self._hub_url),
             errors=errors,
             description_placeholders={
                 "hub_url_example": _DEFAULT_HUB_URL,
@@ -298,6 +303,10 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self._validate_manual_key(user_input, errors)
 
         if method != "hub":
+            return False
+
+        if not hub_url:
+            errors[CONF_HUB_URL] = "hub_url_required"
             return False
 
         try:

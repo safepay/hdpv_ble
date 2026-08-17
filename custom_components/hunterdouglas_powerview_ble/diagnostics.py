@@ -32,7 +32,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.redact import async_redact_data
 
 from . import ConfigEntryType
-from .api import ShadeCmd
+from .api import V2_RECORD_LEN, ShadeCmd
 from .const import CONF_HOME_KEY, CONF_HUB_URL, DOMAIN, MFCT_ID
 from .coordinator import PVCoordinator
 
@@ -211,12 +211,12 @@ def _advertisement(
     return {
         "raw": raw.hex(" "),
         "length": len(raw),
-        "is_v2_record": len(raw) == 9,
+        "is_v2_record": len(raw) == V2_RECORD_LEN,
         # The top two bits of byte 8 drive the battery sensor via a
         # 3/2/1/0 -> 100/50/20/0 % table. Report the code itself: hardwired
         # shades also sit at 3, so the decoded 100% below means little on its
         # own.
-        "power_level_code": raw[8] >> 6 if len(raw) == 9 else None,
+        "power_level_code": raw[8] >> 6 if len(raw) == V2_RECORD_LEN else None,
         "decoded": async_redact_data(dict(coord.data), TO_REDACT),
         "velocity": coord.velocity,
     }
