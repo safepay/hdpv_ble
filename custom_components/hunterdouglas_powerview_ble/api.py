@@ -32,6 +32,12 @@ UUID_DEV_SERVICE: Final[str] = normalize_uuid_str("180a")
 
 ATTR_ACTIVITY: Final[str] = "activity"
 
+# Length of the V2 manufacturer-data record every PowerView shade advertises.
+# Nothing else the integration understands is carried under company ID 2073, so
+# this doubles as the test for "is this actually a shade" -- see
+# `_is_shade_advert` in __init__.py for why that test is needed at all.
+V2_RECORD_LEN: Final[int] = 9
+
 
 # Type IDs and their product names follow aiopvapi's `resources/shade.py`, the
 # library behind Home Assistant's official (hub-based) hunterdouglas_powerview
@@ -385,7 +391,7 @@ class PowerViewBLE:
     @staticmethod
     def dec_manufacturer_data(data: bytearray) -> dict[str, float | int | bool]:
         """Decode manufacturer data from BLE advertisement V2."""
-        if len(data) != 9:
+        if len(data) != V2_RECORD_LEN:
             LOGGER.debug("not a V2 record!")
             return {}
         # data[3] lower 2 bits are status flags; pos is in bits 2-7 of data[3]

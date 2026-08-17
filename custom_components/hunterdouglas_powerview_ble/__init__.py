@@ -30,7 +30,7 @@ from homeassistant.helpers.dispatcher import (
 )
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .api import UUID_COV_SERVICE as UUID
+from .api import UUID_COV_SERVICE as UUID, V2_RECORD_LEN
 from .const import (
     CONF_FRIENDLY_NAMES,
     CONF_HUB_URL,
@@ -150,6 +150,26 @@ def _resolve_friendly_name(
     return friendly_name
 
 
+def _is_shade_advert(service_info: BluetoothServiceInfoBleak) -> bool:
+    """Whether this advertisement really came from a PowerView shade.
+
+    Passing Home Assistant's Bluetooth matcher is not enough. The matcher tests
+    company ID 2073 and service UUID fdc1 against `BluetoothServiceInfoBleak`,
+    which is a *union* of everything an address has ever advertised -- both
+    habluetooth (`base_scanner.py`, service_uuids and manufacturer_data are
+    merged into the previous record) and BlueZ's own Device1 properties
+    accumulate that way and never forget. So the two conditions need not have
+    arrived in the same packet, or in the same minute, and unrelated hardware
+    has been adopted as a shade on the strength of it -- a freezer and a coffee
+    machine in issue #42.
+
+    The payload itself does not accumulate: manufacturer_data[2073] is whatever
+    that company ID last carried. A shade always puts a V2 record there, so its
+    length is the honest test.
+    """
+    return len(service_info.manufacturer_data.get(MFCT_ID, b"")) == V2_RECORD_LEN
+
+
 async def _async_setup_shade(
     hass: HomeAssistant,
     entry: ConfigEntryType,
@@ -160,6 +180,12 @@ async def _async_setup_shade(
     address = service_info.address
 
     if address in entry.runtime_data:
+        return
+
+    if not _is_shade_advert(service_info):
+        # Rechecked on every advertisement this address sends, so a shade first
+        # heard mid-packet is adopted as soon as a whole record arrives.
+        LOGGER.debug("%s: no PowerView V2 record, not a shade", address)
         return
 
     ble_device: BLEDevice | None = async_ble_device_from_address(
@@ -227,7 +253,13 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool
         service_info: BluetoothServiceInfoBleak,
         change: bluetooth.BluetoothChange,
     ) -> None:
-        if service_info.address not in entry.runtime_data:
+        # Both conditions are rechecked inside _async_setup_shade, which is the
+        # chokepoint the startup sweep shares. Testing them here as well keeps a
+        # rejected device from costing a task per advertisement, and a shade
+        # advertises several a second while it is moving.
+        if service_info.address not in entry.runtime_data and _is_shade_advert(
+            service_info
+        ):
             hass.async_create_task(
                 _async_setup_shade(hass, entry, service_info, shade_names)
             )
