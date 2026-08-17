@@ -18,7 +18,6 @@ from homeassistant.components.cover import (
     CoverEntityFeature,
 )
 from homeassistant.core import HomeAssistant, callback
-from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ConfigEntryType, async_setup_shade_platform
@@ -102,7 +101,7 @@ class PowerViewCoverBase(PassiveBluetoothCoordinatorEntity[PVCoordinator], Cover
         self._coord: PVCoordinator = coordinator
         self._attr_device_info = self._coord.device_info
         self._attr_unique_id = (
-            f"{DOMAIN}_{format_mac(self._coord.address)}_{CoverDeviceClass.SHADE}"
+            f"{DOMAIN}_{self._coord.unique_id_stem}_{CoverDeviceClass.SHADE}"
         )
         # Seeded from the entity's own view of position, so subclasses that
         # invert or remap the device axis start out consistent with what they

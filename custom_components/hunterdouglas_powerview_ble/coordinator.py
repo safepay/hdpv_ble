@@ -16,12 +16,38 @@ from homeassistant.components.bluetooth.passive_update_coordinator import (
 from homeassistant.const import SUN_EVENT_SUNRISE, SUN_EVENT_SUNSET
 from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers import device_registry as dr
-from homeassistant.helpers.device_registry import CONNECTION_BLUETOOTH, DeviceInfo
+from homeassistant.helpers.device_registry import (
+    CONNECTION_BLUETOOTH,
+    DeviceInfo,
+    format_mac,
+)
 from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
 
 from .api import SHADE_TYPE, PowerViewBLE, ShadeCapability, get_shade_capabilities
 from .const import ATTR_RSSI, CONF_HOME_KEY, DOMAIN, LOGGER
+
+
+def shade_id_for(ble_device: BLEDevice) -> str:
+    """Return the identity a shade keeps when its Bluetooth address changes.
+
+    The address is not it. Shades advertise from random static addresses,
+    which the specification permits a device to regenerate at every power
+    cycle, and one shade has been seen under two addresses at once. Because
+    the device registry entry and every entity unique ID were built from the
+    address, a shade that changed it became a second device with a second set
+    of entities, and the `cover.*` that dashboards and automations point at
+    went stale -- the "automation and dashboard failures" of issue #42.
+
+    The advertised local name (`SKL:C71E`, `DUE:8964`) survives the change,
+    and is already what a hub's own roster is keyed by, so identity hangs off
+    that instead. A shade advertising no name falls back to the address and
+    keeps exactly the identifiers and unique IDs it has today.
+    """
+    name = ble_device.name
+    if name and name != ble_device.address:
+        return name
+    return ble_device.address
 
 
 class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
@@ -49,6 +75,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         # have seen, but an assert here died inside a fire-and-forget setup
         # task and took the shade with it. The address is always available.
         self._friendly_name = friendly_name or ble_device.name or ble_device.address
+        self._shade_id = shade_id_for(ble_device)
         home_key_hex: str = data.get(CONF_HOME_KEY, "")
         home_key: bytes = (
             bytes.fromhex(home_key_hex) if len(home_key_hex) == 32 else b""
@@ -81,6 +108,61 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
     def friendly_name(self) -> str:
         """Return the shade's resolved friendly name."""
         return self._friendly_name
+
+    @property
+    def shade_id(self) -> str:
+        """Return the address-independent identity; see `shade_id_for`."""
+        return self._shade_id
+
+    @property
+    def unique_id_stem(self) -> str:
+        """Return `shade_id` in the form entity unique IDs have always used.
+
+        `format_mac` returns anything that is not an address unchanged, so a
+        named shade contributes its name verbatim while a nameless one keeps
+        the lower-cased address its existing unique IDs were built from.
+        """
+        return format_mac(self._shade_id)
+
+    @callback
+    def async_retarget(self, ble_device: BLEDevice) -> None:
+        """Follow this shade to a Bluetooth address it has moved to.
+
+        Everything that identifies the shade to Home Assistant is derived from
+        `shade_id`, so the device, its entities and their history all stay put
+        and only the radio subscriptions move.
+        """
+        self.api.set_ble_device(ble_device)
+        if ble_device.address == self.address:
+            return
+
+        old_address = self.address
+        LOGGER.info(
+            "%s moved from %s to %s",
+            self._friendly_name,
+            old_address,
+            ble_device.address,
+        )
+        # Deliberately the parent's stop, which unsubscribes and nothing more.
+        # This class overrides `_async_stop` to also tear down the device-info
+        # task, which is what entry unload wants and a retarget does not.
+        super()._async_stop()
+        self.address = ble_device.address
+        self._async_start()
+        # Any open link is to an address that no longer answers.
+        self.hass.async_create_task(self.api.disconnect())
+
+        reg = dr.async_get(self.hass)
+        device = reg.async_get_device(identifiers={(DOMAIN, self._shade_id)})
+        if device is not None:
+            reg.async_update_device(
+                device.id,
+                new_identifiers={
+                    (DOMAIN, self._shade_id),
+                    (BLUETOOTH_DOMAIN, self.address),
+                },
+                new_connections={(CONNECTION_BLUETOOTH, self.address)},
+            )
 
     @property
     def type_id(self) -> int | None:
@@ -150,7 +232,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
 
     def _push_device_registry_update(self) -> None:
         reg = dr.async_get(self.hass)
-        device = reg.async_get_device(identifiers={(DOMAIN, self.address)})
+        device = reg.async_get_device(identifiers={(DOMAIN, self._shade_id)})
         if device is None:
             return
         reg.async_update_device(
@@ -211,7 +293,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         LOGGER.debug("%s: device_info, %s", self._friendly_name, self.dev_details)
         return DeviceInfo(
             identifiers={
-                (DOMAIN, self.address),
+                (DOMAIN, self._shade_id),
                 (BLUETOOTH_DOMAIN, self.address),
             },
             connections={(CONNECTION_BLUETOOTH, self.address)},
