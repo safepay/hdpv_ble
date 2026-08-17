@@ -21,7 +21,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ConfigEntryType, async_setup_shade_platform
-from .api import CLOSED_POSITION, OPEN_POSITION, ShadeMove
+from .api import CLOSED_POSITION, KEEP_POSITION, OPEN_POSITION, ShadeMove
 from .const import DOMAIN, LOGGER
 from .coordinator import PVCoordinator
 
@@ -526,15 +526,14 @@ class PowerViewCoverTDBUTop(PowerViewCoverBase):
 
     @callback
     def _get_shade_move(self, target: int) -> ShadeMove | None:
-        """Restate the top rail unchanged and drive position2 to the target.
+        """Drive position2; leave the top rail (pos1) unchanged via KEEP.
 
-        Restating takes the last reading, not a fresh one; the clamp above is
-        where a genuinely unknown rail stops the move.
+        Using KEEP (instead of restating the current top reading) lets a
+        concurrent top-rail command coalesce into one SET_POSITION that
+        carries both targets, instead of the bottom command overwriting the
+        top's intended position.
         """
-        top_rail_raw = self._last_position(ATTR_CURRENT_POSITION)
-        if top_rail_raw is None:
-            return None
-        return ShadeMove(pos1=top_rail_raw, pos2=target)
+        return ShadeMove(pos1=KEEP_POSITION, pos2=target)
 
 
 class PowerViewCoverDuoliteBase(PowerViewCoverBase):

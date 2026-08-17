@@ -163,20 +163,13 @@ OPEN_POSITION: Final[int] = 100
 CLOSED_POSITION: Final[int] = 0
 
 # Wire sentinel meaning "leave this axis where it is". Sent verbatim, which for
-# pos2 means skipping the *100 fixed-point scaling a real lift position would
+# lift rails means skipping the *100 fixed-point scaling a real position would
 # get; pos3 and tilt are unscaled either way.
 #
-# Not usable in pos1: set_position scales that axis unconditionally, so passing
-# it here raises OverflowError rather than reaching the shade. No caller does,
-# and it is left that way deliberately -- 0x8000 is confirmed on hardware for
-# pos2 and pos3 (it is what every tilt command already sends) but never
-# attempted in pos1, and the emulator does not implement the sentinel at all,
-# so there is nothing to check an assumption against.
-#
-# Worth settling: aiopvapi and Home Assistant's own hub integration send a tilt
-# with no lift axis at all, and this sentinel is the wire equivalent of that
-# omission. If it works in pos1, the tilt path need not restate a lift position
-# it has to go looking for -- which is what issue #29 turned on.
+# Confirmed on hardware for pos2 and pos3 (every tilt command already sends
+# it). Pos1 uses the same encoding path now so dual-rail callers can leave the
+# top rail alone without restating a possibly-stale reading. The BLE emulator
+# does not implement the sentinel, so keep that in mind when testing there.
 KEEP_POSITION: Final[int] = 0x8000
 
 
@@ -353,14 +346,49 @@ class PowerViewBLE:
         return seq
 
     # general cmd: uint16_t cmd, uint8_t seqID, uint8_t data_len
+    @staticmethod
+    def _merge_set_position_payload(pending: bytes, new: bytes) -> bytes:
+        """Merge two SET_POSITION payloads axis-by-axis.
+
+        KEEP_POSITION (0x8000) on an axis means "leave as-is": keep the
+        pending value for that axis. Concrete values from ``new`` win. This
+        is what lets a top-rail move (pos1 set, pos2 KEEP) and a bottom-rail
+        move (pos1 KEEP, pos2 set) that arrive while the device is busy
+        become one command that drives both rails.
+        """
+        if len(pending) < 9 or len(new) < 9:
+            return new
+        out = bytearray(new)
+        for offset in (0, 2, 4, 6):
+            new_v = int.from_bytes(new[offset : offset + 2], "little")
+            if new_v == KEEP_POSITION:
+                out[offset : offset + 2] = pending[offset : offset + 2]
+        return bytes(out)
+
     async def _cmd(self, cmd: tuple[ShadeCmd, bytes], disconnect: bool = True) -> None:
         # Commands coalesce rather than queue: one arriving while another is
         # in flight replaces the pending one, so dragging a slider does not
-        # put every intermediate position on the wire.
-        self._cmd_next = (cmd, disconnect)
-        if self._cmd_lock.locked():
+        # put every intermediate position on the wire. SET_POSITION is special:
+        # Dual-rail entities often fire two moves back-to-back (top + bottom).
+        # Replacing would drop one rail's target; merging KEEP axes keeps both.
+        if self._cmd_lock.locked() and getattr(self, "_cmd_next", None) is not None:
+            pending_cmd, pending_disconnect = self._cmd_next
+            if (
+                pending_cmd[0] == ShadeCmd.SET_POSITION
+                and cmd[0] == ShadeCmd.SET_POSITION
+            ):
+                merged = self._merge_set_position_payload(pending_cmd[1], cmd[1])
+                self._cmd_next = (
+                    (ShadeCmd.SET_POSITION, merged),
+                    pending_disconnect and disconnect,
+                )
+                LOGGER.debug("%s: merged SET_POSITION while device busy", self.name)
+                return
+            self._cmd_next = (cmd, disconnect)
             LOGGER.debug("%s: device busy, queuing %s command", self.name, cmd[0])
             return
+
+        self._cmd_next = (cmd, disconnect)
 
         # Whoever holds the lock owns whatever ends up in _cmd_next, so keep
         # going until nothing new has arrived. Reading it once was not
@@ -373,8 +401,8 @@ class PowerViewBLE:
                 try:
                     await self._connect()
                     # Read after connecting, so a command arriving while the
-                    # link is coming up still replaces this one instead of
-                    # being sent after it.
+                    # link is coming up still replaces/merges this one instead
+                    # of being sent after it.
                     pending = self._cmd_next
                     cmd_run, disconnect_run = pending
                     try:
@@ -469,15 +497,16 @@ class PowerViewBLE:
             tilt,
             velocity,
         )
-        # pos2 is another lift-rail position, like pos1 -- not a rotation like
-        # tilt -- so it gets the same *100 fixed-point wire encoding as pos1.
+        # pos1/pos2 are lift-rail positions and use *100 fixed-point encoding.
         # KEEP_POSITION is the device's "leave unchanged" sentinel and must
-        # pass through unmultiplied.
+        # pass through unmultiplied on every axis (including pos1), otherwise
+        # dual-rail commands cannot leave the other rail alone.
+        pos1_wire = pos1 if pos1 == KEEP_POSITION else pos1 * 100
         pos2_wire = pos2 if pos2 == KEEP_POSITION else pos2 * 100
         await self._cmd(
             (
                 ShadeCmd.SET_POSITION,
-                int.to_bytes(pos1 * 100, 2, byteorder="little")
+                int.to_bytes(pos1_wire, 2, byteorder="little")
                 + int.to_bytes(pos2_wire, 2, byteorder="little")
                 + int.to_bytes(pos3, 2, byteorder="little")
                 + int.to_bytes(tilt, 2, byteorder="little")
