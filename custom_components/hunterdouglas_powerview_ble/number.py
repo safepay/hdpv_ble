@@ -6,7 +6,6 @@ from homeassistant.components.bluetooth.passive_update_coordinator import (
 from homeassistant.components.number import NumberMode, RestoreNumber
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ConfigEntryType, async_setup_shade_platform
@@ -48,7 +47,7 @@ class PowerViewVelocity(
         """Initialize the velocity entity."""
         self._coord = coordinator
         self._attr_device_info = self._coord.device_info
-        self._attr_unique_id = f"{DOMAIN}_{format_mac(self._coord.address)}_velocity"
+        self._attr_unique_id = f"{DOMAIN}_{self._coord.unique_id_stem}_velocity"
         super().__init__(coordinator)
 
     @property

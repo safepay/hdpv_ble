@@ -149,7 +149,7 @@ def _entities(hass: HomeAssistant, coord: PVCoordinator) -> list[dict[str, Any]]
 
     An empty list is itself the first of those answers.
     """
-    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, coord.address)})
+    device = dr.async_get(hass).async_get_device(identifiers={(DOMAIN, coord.shade_id)})
     if device is None:
         return []
 
@@ -270,6 +270,9 @@ async def _async_shade(
     return {
         "name": coord.friendly_name,
         "ble_name": ble_name,
+        # The registry key. Differs from `address` on every shade that
+        # advertises a name, and is what survives an address change.
+        "shade_id": coord.shade_id,
         "address": coord.address,
         "device": _device(coord),
         "capabilities": _capabilities(coord),
@@ -308,9 +311,13 @@ async def async_get_device_diagnostics(
     hass: HomeAssistant, entry: ConfigEntryType, device: dr.DeviceEntry
 ) -> dict[str, Any]:
     """Return diagnostics for a single shade."""
-    addresses = {ident[1] for ident in device.identifiers if ident[0] == DOMAIN}
+    shade_ids = {ident[1] for ident in device.identifiers if ident[0] == DOMAIN}
     coord = next(
-        (coord for addr, coord in entry.runtime_data.items() if addr in addresses),
+        (
+            coord
+            for shade_id, coord in entry.runtime_data.items()
+            if shade_id in shade_ids
+        ),
         None,
     )
     if coord is None:

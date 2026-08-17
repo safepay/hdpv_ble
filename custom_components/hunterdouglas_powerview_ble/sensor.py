@@ -12,7 +12,6 @@ from homeassistant.const import (
     EntityCategory,
 )
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ConfigEntryType, async_setup_shade_platform
@@ -45,7 +44,7 @@ def _add_entities(
     """Create sensor entities for a single shade coordinator."""
     async_add_entities(
         [
-            PVSensor(coordinator, descr, format_mac(coordinator.address))
+            PVSensor(coordinator, descr, coordinator.unique_id_stem)
             for descr in SENSOR_TYPES
         ]
     )

@@ -12,7 +12,6 @@ from homeassistant.components.button import (
 )
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ConfigEntryType, async_setup_shade_platform
@@ -59,7 +58,7 @@ class PowerViewButton(PassiveBluetoothCoordinatorEntity[PVCoordinator], ButtonEn
         self._coord: PVCoordinator = coordinator
         self._attr_device_info = self._coord.device_info
         self._attr_unique_id = (
-            f"{DOMAIN}_{format_mac(self._coord.address)}_{ButtonDeviceClass.IDENTIFY}"
+            f"{DOMAIN}_{self._coord.unique_id_stem}_{ButtonDeviceClass.IDENTIFY}"
         )
         super().__init__(coordinator)
 

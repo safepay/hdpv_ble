@@ -10,7 +10,6 @@ from homeassistant.components.bluetooth.passive_update_coordinator import (
 )
 from homeassistant.const import ATTR_BATTERY_CHARGING, EntityCategory
 from homeassistant.core import HomeAssistant
-from homeassistant.helpers.device_registry import format_mac
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ConfigEntryType, async_setup_shade_platform
@@ -49,9 +48,9 @@ def _add_entities(
     coordinator: PVCoordinator, async_add_entities: AddEntitiesCallback
 ) -> None:
     """Create binary sensor entities for a single shade coordinator."""
-    mac = format_mac(coordinator.address)
+    stem = coordinator.unique_id_stem
     async_add_entities(
-        PVBinarySensor(coordinator, descr, mac) for descr in BINARY_SENSOR_TYPES
+        PVBinarySensor(coordinator, descr, stem) for descr in BINARY_SENSOR_TYPES
     )
 
 
