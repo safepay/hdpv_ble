@@ -230,18 +230,14 @@ include, particularly the physical detail diagnostics can't capture.
 
 <details><summary>Battery entities appear on hardwired shades</summary>
 
-Every shade gets a `Battery` sensor and a `Charging` binary sensor, mains-wired
-or not. On a hardwired shade the battery sits at a constant 100%.
+A mains-wired shade now gets its `Battery` and `Charging` entities created
+**disabled** rather than withheld, so a shade we misread costs you one toggle
+on its device page instead of a missing sensor. The power source comes from the
+hub's `powerType`, or from one Bluetooth query per shade; anything unreadable
+keeps its battery entities, as do all type 10 shades.
 
-The power source is not something the shades report reliably: the advertisement's
-power level is two bits wide and its top code means "100% to 51% remaining" *or*
-"hardwired", with no way to tell them apart. An earlier attempt to detect it
-misread a status byte as a power-type enum and stripped the battery sensors off
-real battery shades, so it was removed rather than left to guess.
-
-Hide the entities you don't want from the shade's device page. Resolving it
-properly needs data from a battery-powered shade — see
-[#23](https://github.com/safepay/hdpv_ble/issues/23) if you have one.
+Entities that already exist are never changed — remove and re-add a shade to
+re-evaluate it. See [#23](https://github.com/safepay/hdpv_ble/issues/23).
 </details>
 
 <details><summary>Schedules stop after a shade loses power</summary>

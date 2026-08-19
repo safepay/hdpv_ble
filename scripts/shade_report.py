@@ -102,43 +102,42 @@ GATT_DEV_INFO: list[tuple[str, str]] = [
 #                              constant cannot classify anything; the only
 #                              reason it looked right is that every sample
 #                              behind it came from a hardwired shade.
-#              b1 = 0x01       power type, and it agrees with the hub: the
-#                              G3 reports powerType=1 for these same six
-#                              shades, all of them confirmed mains-powered.
-#                              The battery and rechargeable codes are still
-#                              unknown — no such sample exists yet.
-#              b2 = 0x64 (100) strong hypothesis: battery/power-level
-#                              %, pegged at 100 on wall power.  A
-#                              battery shade should report its real %
-#                              here.  NOT a duplicate of the advert's
-#                              2-bit level field — this is the full
-#                              byte-resolution value.
-#              b3              live / noisy byte — read-to-read drift
-#                              of 3-9 counts with no physical change.
-#                              Too jittery to be temperature; best
-#                              guess is radio or ADC telemetry.  Not
-#                              practically useful without a burst-
-#                              capture characterization.
-#              b4 = 0x07       constant on all hardwired shades seen.
-#                              Likely capability or power-config flags.
-#              b5              persistent per-shade state.  Observed
-#                              to change exactly once across ~10
-#                              experiments on one unit (227 -> 205
-#                              during the first commanded move of a
-#                              session).  Each idle shade holds its
-#                              own stable value (114/127/139/205 seen
-#                              at position=100%).  Triggers RULED OUT:
-#                              every move, cold-start after 15-min
-#                              idle, short-period timer, distance-
-#                              gated motion snapshot, top & bottom
-#                              end-stop calibration.  Remaining
-#                              candidates: boot-triggered state,
-#                              long-period (hours+) timer, or hub-
-#                              initiated refresh.
-#              b6 type_id      matches advertisement byte 2 (confirmed).
+#              b1 = power type on aiopvapi's numbering, which is also
+#                              what the hub reports as powerType.  1 =
+#                              hardwired is confirmed twice over: six
+#                              shades at fw_rev=22 read 1 while their G3
+#                              hub independently reported powerType=1, all
+#                              six known mains-powered.  0 (battery) and 2
+#                              (rechargeable) come from three confirmed
+#                              battery shades in a second home, issue #42 --
+#                              the battery sample this file spent a year
+#                              without.  11 and 12 remain unseen here.
+#              b2 = charge %, full byte resolution.  100 on every hardwired
+#                              shade and on two of the three battery ones;
+#                              63 on the third, which held that value across
+#                              three days while b3 drifted, and which sits
+#                              inside the advert's 2-bit band 3 as it should.
+#                              NOT a duplicate of that 2-bit field.
+#              b3-b6           two little-endian uint16s, not four separate
+#                              bytes.  This is the reading that explains both
+#                              of the old mysteries at once: b3's 3-9 count
+#                              read-to-read drift is the low byte of an
+#                              analogue reading, and b5 dropping 227 -> 205
+#                              on the first commanded move of a session is a
+#                              rail sagging under motor load and staying
+#                              down.  b3b4 reads ~1800-2000 hardwired and
+#                              ~1440-1460 on battery; b5b6 ~1650-1750 and
+#                              ~1410-1435.  Millivolts is the obvious guess
+#                              and is not established.  b4 is therefore not
+#                              a flags byte, and b6 is NOT type_id: that
+#                              only ever held because the shades behind it
+#                              were type 6 and b6 read 6.  Type 8 shades
+#                              report b6=5.
 #              b7 = 0x00       reserved / padding on all observations.
-#            All b1-b7 findings are fw_rev=22 hardwired-only; re-verify
-#            on battery / rechargeable hardware before relying on them.
+#            Type 10 shades answer this opcode with 06 02 00 00 00 00 00 01
+#            -- a full-length payload whose status byte is not 0, so nothing
+#            after it can be read.  Three of them replied identically, so
+#            the power source of a type 10 is simply not available here.
 #            0xFFDE remains the only reliable source for battery-vs-
 #            hardwired detection (the advert's 2-bit level field caps
 #            at 3 = "100% OR hardwired" and cannot disambiguate).
@@ -171,12 +170,17 @@ PV_ERROR_CODES: dict[int, str] = {
 }
 
 # 0xFFDE byte 1 — power type (byte 0 is the reply's status code, not the power
-# type).  1 = hardwired is confirmed: six shades at fw_rev=22 all report b1=0x01,
-# the G3 hub independently reports powerType=1 for the same six, and all six are
-# known to be mains-powered.  Every other code is deliberately absent: guessing
-# at them is what produced the last bug, so an unseen value prints as unknown.
+# type).  1 = hardwired is confirmed by six shades whose hub agreed; 0 and 2 by
+# three battery shades in a second home.  11 and 12 are aiopvapi's remaining
+# codes and have never been seen here, but are listed so they are labelled
+# rather than guessed at.  Anything else prints as unknown -- guessing is what
+# produced the last bug.
 POWER_TYPE_LABELS: dict[int, str] = {
+    0: "battery (observed)",
     1: "hardwired (confirmed)",
+    2: "rechargeable (observed)",
+    11: "rechargeable (aiopvapi; unseen here)",
+    12: "hardwired (aiopvapi; unseen here)",
 }
 
 # Known-good response lengths per opcode.  Used only by annotate_query
@@ -446,29 +450,31 @@ def annotate_query(cmd: int, payload: bytes) -> str | None:
     if cmd == 0xFFDE and len(payload) == 8:
         power_type = payload[1]
         label = POWER_TYPE_LABELS.get(power_type, f"unknown ({power_type})")
-        # Per-byte interpretations as of 2026-04-21, corrected once the hub
-        # cross-check landed (see module-level comment).  b0, b1 and b6 are
-        # confirmed; b2/b4/b7 are strong hypotheses based on hardwired shades
-        # at fw_rev=22; b3 is a live noisy byte; b5 is persistent per-shade
-        # state with an unknown refresh trigger.
+        # Per-byte interpretations, revised 2026-08-19 against three battery
+        # shades (issue #42).  b0, b1 and b2 hold across both power sources.
+        # b6 is NOT type_id: that held only because the shades behind it were
+        # type 6 and b6 read 6, and type 8 shades report b6=5.  b3-b6 read
+        # better as two little-endian uint16s, the one reading that explains
+        # b3 drifting a few counts between reads and b5 stepping down once
+        # under motor load.
         # 11-space indent on continuation lines aligns with the "→ "
         # prefix added by _print_queries (9 spaces + arrow + space).
         indent = "           "
+        rail_a = int.from_bytes(payload[3:5], "little")
+        rail_b = int.from_bytes(payload[5:7], "little")
         return (
             f"byte 0 = 0x{payload[0]:02X} → status (0 = success; NOT the power "
             f"type — reading it as one is what hid the battery sensors)\n"
             f"{indent}byte 1 = 0x{payload[1]:02X} → power_type={power_type} "
             f"({label}); same encoding as the hub's powerType\n"
-            f"{indent}byte 2 = 0x{payload[2]:02X} ({payload[2]}) → "
-            f"battery/power level % (hypothesis — pegged at 100 on hardwired)\n"
-            f"{indent}byte 3 = 0x{payload[3]:02X} → live/noisy byte "
-            f"(drifts between reads; radio or ADC telemetry)\n"
-            f"{indent}byte 4 = 0x{payload[4]:02X} → capability/config flags "
-            f"(const 0x07 on hardwired; hypothesis)\n"
-            f"{indent}byte 5 = 0x{payload[5]:02X} → persistent per-shade state "
-            f"(rarely updates; refresh trigger unknown)\n"
-            f"{indent}byte 6 = 0x{payload[6]:02X} → type_id={payload[6]} "
-            f"(cross-check with advert)\n"
+            f"{indent}byte 2 = 0x{payload[2]:02X} ({payload[2]}) → charge %, "
+            f"full byte resolution (100 on hardwired, 63 seen on battery)\n"
+            f"{indent}bytes 3-4 = {rail_a} → uint16 LE, hypothesis: a "
+            f"rail voltage or ADC reading. Drifts a few counts between "
+            f"reads; ~1800-2000 hardwired, ~1440-1460 battery\n"
+            f"{indent}bytes 5-6 = {rail_b} → uint16 LE, second reading. "
+            f"Steps down once under motor load and stays there; "
+            f"~1650-1750 hardwired, ~1410-1435 battery\n"
             f"{indent}byte 7 = 0x{payload[7]:02X} → reserved/padding"
         )
     return None

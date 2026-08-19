@@ -24,7 +24,14 @@ from homeassistant.helpers.device_registry import (
 from homeassistant.helpers.sun import get_astral_event_date
 from homeassistant.util import dt as dt_util
 
-from .api import SHADE_TYPE, PowerViewBLE, ShadeCapability, get_shade_capabilities
+from .api import (
+    POWER_TYPE_HARDWIRED,
+    SHADE_TYPE,
+    PowerViewBLE,
+    ShadeCapability,
+    decode_power_type,
+    get_shade_capabilities,
+)
 from .const import ATTR_RSSI, CONF_HOME_KEY, DOMAIN, LOGGER
 
 
@@ -91,6 +98,7 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
         self._dev_info_task: asyncio.Task[None] | None = None
         self._solar_day: date | None = None
         self._solar: tuple[dt_time, dt_time] | None = None
+        self._power_type: int | None = None
 
         LOGGER.debug(
             "Initializing coordinator for %s (%s)",
@@ -176,6 +184,50 @@ class PVCoordinator(PassiveBluetoothDataUpdateCoordinator):
     def shade_capabilities(self) -> ShadeCapability:
         """Return the shade capabilities based on type ID."""
         return get_shade_capabilities(self.type_id)
+
+    @property
+    def power_type(self) -> int | None:
+        """Return the probed power type, or None if it is not known."""
+        return self._power_type
+
+    @power_type.setter
+    def power_type(self, value: int | None) -> None:
+        """Seed the power type from the cache, skipping the GATT probe."""
+        self._power_type = value
+
+    @property
+    def battery_powered(self) -> bool:
+        """Whether this shade should offer battery entities.
+
+        Biased towards yes. Only a power type with outside corroboration --
+        the hardwired codes, which six shades reported while their hub agreed
+        -- answers no; an unreadable, unrecognised or never-probed shade keeps
+        its battery entities. A spurious sensor on a mains shade is a smaller
+        failure than a missing one on a battery shade, and the entities are
+        disabled rather than withheld either way, so a wrong answer here is
+        one the owner can undo.
+        """
+        return self._power_type not in POWER_TYPE_HARDWIRED
+
+    async def query_power_type(self) -> int | None:
+        """Probe the power type over GATT, returning None if it cannot be read.
+
+        Never raises: this is an unsolicited extra on top of setup, and a
+        shade too weak to answer must still get its entities.
+        """
+        try:
+            payload = await self.api.query_power_status()
+        except (BleakError, TimeoutError) as ex:
+            LOGGER.debug("%s: power status query failed: %s", self.name, ex)
+            return None
+        self._power_type = decode_power_type(payload)
+        LOGGER.debug(
+            "%s: power status %s, power type %s",
+            self.name,
+            payload.hex(" "),
+            self._power_type,
+        )
+        return self._power_type
 
     @property
     def data_available(self) -> bool:

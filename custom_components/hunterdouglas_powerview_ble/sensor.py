@@ -71,6 +71,13 @@ class PVSensor(PassiveBluetoothCoordinatorEntity[PVCoordinator], SensorEntity): 
         self._attr_unique_id = f"{DOMAIN}-{unique_id}-{descr.key}"
         self._attr_device_info = pv_dev.device_info
         self.entity_description = descr
+        if descr.key == ATTR_BATTERY_LEVEL and not pv_dev.battery_powered:
+            # Disabled rather than withheld: the power type is read from one
+            # GATT byte and can be wrong, so the owner of a shade we called
+            # mains-powered can simply switch its battery sensor back on.
+            # Only ever set for the battery key -- RSSI carries its own
+            # disabled-by-default flag on the description.
+            self._attr_entity_registry_enabled_default = False
         super().__init__(pv_dev)
 
     @property

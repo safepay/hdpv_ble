@@ -195,6 +195,34 @@ class ShadeMove(NamedTuple):
     tilt: int = KEEP_POSITION
 
 
+# Length of the 0xFFDE power-status reply, and the offsets that matter.
+POWER_STATUS_LEN: Final[int] = 8
+_POWER_STATUS_OK: Final[int] = 0  # byte 0 is the protocol status, not data
+
+# Byte 1 of that reply is the power type, on the numbering aiopvapi uses and
+# that the G3 hub reports as `powerType`. Only the hardwired codes are acted
+# on, and only because they are the ones with outside corroboration: six
+# hardwired shades read 1 here while their hub independently reported
+# powerType=1. Battery shades have since been seen reading 0 and 2.
+POWER_TYPE_HARDWIRED: Final[frozenset[int]] = frozenset({1, 12})
+POWER_TYPE_BATTERY: Final[frozenset[int]] = frozenset({0, 2, 11})
+POWER_TYPE_KNOWN: Final[frozenset[int]] = POWER_TYPE_HARDWIRED | POWER_TYPE_BATTERY
+
+
+def decode_power_type(payload: bytes) -> int | None:
+    """Return the power type from a 0xFFDE reply, or None if it said nothing.
+
+    None covers every way the answer can fail to arrive: a reply of the wrong
+    length, and a non-zero status byte -- which is what type 10 shades give,
+    answering `06 02 00 00 00 00 00 01` with a full-length payload whose lead
+    byte is not a success code. Callers must treat None as "unknown" rather
+    than as any particular power source.
+    """
+    if len(payload) != POWER_STATUS_LEN or payload[0] != _POWER_STATUS_OK:
+        return None
+    return int(payload[1])
+
+
 POWER_LEVELS: Final[dict[int, int]] = {
     3: 100,  # 3 = 100% to 51% power remaining (also reported by hardwired)
     2: 50,  # 2 = 50% to 21% power remaining
