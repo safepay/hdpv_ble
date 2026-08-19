@@ -79,6 +79,12 @@ class PVBinarySensor(
         self._attr_device_info = coord.device_info
         self._attr_has_entity_name = True
         self.entity_description = descr
+        if descr.key == ATTR_BATTERY_CHARGING and not coord.battery_powered:
+            # See PVSensor: disabled, not withheld, so a misread power type
+            # costs the owner one toggle rather than a missing sensor. The two
+            # reset flags keep the disabled-by-default set on their own
+            # descriptions.
+            self._attr_entity_registry_enabled_default = False
         super().__init__(coord)
 
     @property

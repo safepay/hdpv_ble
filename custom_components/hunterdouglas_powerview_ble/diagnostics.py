@@ -63,7 +63,7 @@ _NOTE: Final[str] = (
     "Raw, uninterpreted values for every shade, for attaching to a GitHub "
     "issue. Some things the integration cannot know and must be stated in the "
     "issue text — notably whether a shade runs on a battery or is wired to "
-    "mains, which it does not detect."
+    "mains, which it detects only where a hub or the shade itself will say."
 )
 
 
@@ -115,6 +115,10 @@ def _device(coord: PVCoordinator) -> dict[str, Any]:
     """Return the shade's identity: type, model and firmware revisions."""
     return {
         "type_id": coord.type_id,
+        # None where the 0xFFDE probe was never run, failed, or came back with
+        # a status byte saying the shade would not answer it.
+        "power_type": coord.power_type,
+        "battery_powered": coord.battery_powered,
         **async_redact_data(dict(coord.dev_details), TO_REDACT),
     }
 

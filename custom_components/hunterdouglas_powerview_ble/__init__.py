@@ -6,6 +6,7 @@
 
 import base64
 from collections.abc import Callable
+from typing import NamedTuple
 
 import aiohttp
 from bleak.backends.device import BLEDevice
@@ -32,10 +33,11 @@ from homeassistant.helpers.dispatcher import (
 )
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
-from .api import UUID_COV_SERVICE as UUID, V2_RECORD_LEN
+from .api import POWER_TYPE_KNOWN, UUID_COV_SERVICE as UUID, V2_RECORD_LEN
 from .const import (
     CONF_FRIENDLY_NAMES,
     CONF_HUB_URL,
+    CONF_POWER_TYPES,
     DOMAIN,
     LOGGER,
     MFCT_ID,
@@ -82,11 +84,21 @@ def async_setup_shade_platform(
     )
 
 
-async def _fetch_shade_names(hass: HomeAssistant, hub_url: str) -> dict[str, str]:
-    """Fetch the shades' friendly names from the hub, keyed by BLE advert name.
+class HubShades(NamedTuple):
+    """What a hub contributes about each shade, keyed by BLE advert name."""
 
-    Returns empty dict on failure.
+    names: dict[str, str]
+    # Only codes this integration recognises. An absent or unrecognised
+    # powerType is left out entirely rather than passed on as a guess.
+    power_types: dict[str, int]
+
+
+async def _fetch_hub_shades(hass: HomeAssistant, hub_url: str) -> HubShades:
+    """Fetch the hub's record of each shade: friendly name and power type.
+
+    Returns empty mappings on failure.
     """
+    empty = HubShades({}, {})
     session = async_get_clientsession(hass)
     timeout = aiohttp.ClientTimeout(total=10)
     try:
@@ -94,9 +106,10 @@ async def _fetch_shade_names(hass: HomeAssistant, hub_url: str) -> dict[str, str
             resp.raise_for_status()
             shades = await resp.json(content_type=None)
     except (TimeoutError, aiohttp.ClientError, ValueError):
-        return {}
+        return empty
 
     names: dict[str, str] = {}
+    power_types: dict[str, int] = {}
     for shade in shades or []:
         ble_name = shade.get("bleName", "")
         if not ble_name:
@@ -107,7 +120,11 @@ async def _fetch_shade_names(hass: HomeAssistant, hub_url: str) -> dict[str, str
         except Exception:  # noqa: BLE001
             name = ble_name
         names[ble_name] = name
-    return names
+
+        power_type = shade.get("powerType")
+        if isinstance(power_type, int) and power_type in POWER_TYPE_KNOWN:
+            power_types[ble_name] = power_type
+    return HubShades(names, power_types)
 
 
 def _persist_cache_entry(
@@ -249,7 +266,7 @@ async def _async_setup_shade(
     hass: HomeAssistant,
     entry: ConfigEntryType,
     service_info: BluetoothServiceInfoBleak,
-    shade_names: dict[str, str],
+    hub: HubShades,
 ) -> None:
     """Create a coordinator for a newly discovered shade."""
     address = service_info.address
@@ -280,7 +297,7 @@ async def _async_setup_shade(
     _migrate_legacy_identity(hass, address, shade_id)
 
     friendly_name = _resolve_friendly_name(
-        hass, entry, service_info, shade_id, shade_names.get(service_info.name)
+        hass, entry, service_info, shade_id, hub.names.get(service_info.name)
     )
 
     coordinator = PVCoordinator(hass, ble_device, entry.data.copy(), friendly_name)
@@ -300,6 +317,25 @@ async def _async_setup_shade(
             address,
         )
 
+    # Power source, in order of preference: the hub's record, then a cached
+    # answer, then a one-off GATT probe. It only steers whether the battery
+    # entities are registered enabled, and the registry settles that the first
+    # time they appear, so probing on every restart would buy nothing and cost
+    # a second Bluetooth connection per shade.
+    cached: dict[str, int] = entry.data.get(CONF_POWER_TYPES, {})
+    if (hub_power := hub.power_types.get(service_info.name)) is not None:
+        # The hub's own record, and the only source that costs no Bluetooth
+        # connection. It wins over the cache because it is read live, so a
+        # shade rewired since the last probe corrects itself.
+        coordinator.power_type = hub_power
+        _persist_cache_entry(hass, entry, CONF_POWER_TYPES, shade_id, hub_power)
+    elif shade_id in cached:
+        coordinator.power_type = cached[shade_id]
+    elif (probed := await coordinator.query_power_type()) is not None:
+        # A shade that could not be read is left uncached deliberately, so the
+        # next restart tries again rather than freezing "unknown" in place.
+        _persist_cache_entry(hass, entry, CONF_POWER_TYPES, shade_id, probed)
+
     async_dispatcher_send(
         hass,
         SIGNAL_NEW_SHADE.format(entry_id=entry.entry_id),
@@ -315,9 +351,9 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool
 
     # Resolve shade friendly names from hub if available
     hub_url = entry.data.get(CONF_HUB_URL, "")
-    shade_names: dict[str, str] = {}
+    hub = HubShades({}, {})
     if hub_url:
-        shade_names = await _fetch_shade_names(hass, hub_url)
+        hub = await _fetch_hub_shades(hass, hub_url)
 
     # Forward platforms first so dispatched entities have their setup ready
     await hass.config_entries.async_forward_entry_setups(entry, PLATFORMS)
@@ -328,9 +364,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool
             MFCT_ID in service_info.manufacturer_data
             and UUID in service_info.service_uuids
         ):
-            hass.async_create_task(
-                _async_setup_shade(hass, entry, service_info, shade_names)
-            )
+            hass.async_create_task(_async_setup_shade(hass, entry, service_info, hub))
 
     # Register for future BLE discoveries
     def _async_discovered_device(
@@ -348,9 +382,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool
             coord.address == service_info.address
             for coord in entry.runtime_data.values()
         ):
-            hass.async_create_task(
-                _async_setup_shade(hass, entry, service_info, shade_names)
-            )
+            hass.async_create_task(_async_setup_shade(hass, entry, service_info, hub))
 
     entry.async_on_unload(
         bluetooth.async_register_callback(
@@ -378,10 +410,11 @@ async def async_remove_config_entry_device(
         return True
 
     new_data = dict(entry.data)
-    cache = dict(new_data.get(CONF_FRIENDLY_NAMES, {}))
-    for shade_id in shade_ids:
-        cache.pop(shade_id, None)
-    new_data[CONF_FRIENDLY_NAMES] = cache
+    for key in (CONF_FRIENDLY_NAMES, CONF_POWER_TYPES):
+        cache = dict(new_data.get(key, {}))
+        for shade_id in shade_ids:
+            cache.pop(shade_id, None)
+        new_data[key] = cache
     hass.config_entries.async_update_entry(entry, data=new_data)
 
     for shade_id in shade_ids:

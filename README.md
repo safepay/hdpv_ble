@@ -233,15 +233,25 @@ include, particularly the physical detail diagnostics can't capture.
 Every shade gets a `Battery` sensor and a `Charging` binary sensor, mains-wired
 or not. On a hardwired shade the battery sits at a constant 100%.
 
-The power source is not something the shades report reliably: the advertisement's
-power level is two bits wide and its top code means "100% to 51% remaining" *or*
-"hardwired", with no way to tell them apart. An earlier attempt to detect it
-misread a status byte as a power-type enum and stripped the battery sensors off
-real battery shades, so it was removed rather than left to guess.
+A shade wired to mains now has its battery and charging entities created
+**disabled**, so they no longer clutter the device page. They are disabled rather
+than withheld deliberately: the detection can be wrong, and switching an entity
+back on from the device page is a smaller inconvenience than a battery shade with
+no battery sensor.
 
-Hide the entities you don't want from the shade's device page. Resolving it
-properly needs data from a battery-powered shade — see
-[#23](https://github.com/safepay/hdpv_ble/issues/23) if you have one.
+The power source is read from the hub's `powerType` where a hub is configured,
+and otherwise from one byte of a Bluetooth query made once per shade. Only the
+hardwired codes disable anything — a shade that cannot be read, or that reports a
+code we don't recognise, keeps its battery entities.
+
+Two things it does not do. It never changes entities that already exist, so
+shades set up before this landed keep whatever they have; remove and re-add a
+shade to re-evaluate it. And type 10 shades refuse the query outright, so they
+are always treated as unknown.
+
+The advertisement cannot help here: its power level is two bits wide and the top
+code means "100% to 51% remaining" *or* "hardwired", with no way to tell them
+apart. See [#23](https://github.com/safepay/hdpv_ble/issues/23).
 </details>
 
 <details><summary>Schedules stop after a shade loses power</summary>
