@@ -172,16 +172,22 @@ _HUB_ERROR_MAP: dict[type[Exception], str] = {
 }
 
 
-def _homekey_schema(hub_url_default: str = "") -> vol.Schema:
-    """Build the homekey form schema, defaulting the hub URL field.
+def _homekey_schema(hub_url_prefill: str = "") -> vol.Schema:
+    """Build the homekey form schema, pre-filling the hub URL field.
 
-    When a gateway has been discovered via zeroconf, ``hub_url_default`` is the
-    discovered URL so the manual-entry fallback comes pre-filled. Otherwise the
-    field starts empty and `_DEFAULT_HUB_URL` appears only as the example in the
-    field's description: pre-filling it meant every user without a gateway
-    submitted the placeholder unchanged and had a hub they do not own recorded
-    on the entry, which then cost a DNS timeout on every reload and reported
-    itself as a configured hub in diagnostics (issue #42).
+    ``hub_url_prefill`` is the gateway found over zeroconf, or the URL already
+    on the entry when reconfiguring, so the box opens on what is configured
+    now. Otherwise it is empty and `_DEFAULT_HUB_URL` appears only as the
+    example in the field's description -- pre-filling that placeholder meant
+    every user without a gateway submitted it unchanged and had a hub they do
+    not own recorded on the entry (issue #42).
+
+    It is a `suggested_value` rather than a `default` because the two behave
+    quite differently on an emptied box. The frontend drops a cleared optional
+    field from the submitted data, and voluptuous then substitutes a `default`
+    -- so clearing the hub URL handed back the very URL being deleted, and the
+    field could not be emptied at all. A `suggested_value` only seeds what the
+    box opens on, leaving an emptied field genuinely absent.
     """
     return vol.Schema(
         {
@@ -206,9 +212,9 @@ def _homekey_schema(hub_url_default: str = "") -> vol.Schema:
                     ]
                 )
             ),
-            vol.Optional(CONF_HUB_URL, default=hub_url_default): TextSelector(
-                TextSelectorConfig(type=TextSelectorType.URL)
-            ),
+            vol.Optional(
+                CONF_HUB_URL, description={"suggested_value": hub_url_prefill}
+            ): TextSelector(TextSelectorConfig(type=TextSelectorType.URL)),
             vol.Optional("home_key", default=""): TextSelector(
                 TextSelectorConfig(type=TextSelectorType.TEXT)
             ),
