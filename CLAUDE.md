@@ -4,24 +4,21 @@ A Home Assistant custom integration, distributed via HACS, that controls Hunter
 Douglas PowerView shades directly over Bluetooth LE — optionally reading
 supplementary data from a PowerView G3 hub over HTTP.
 
-This file lives at the repository root and is tracked, so edits to it ship in a
-pull request like any other change. `.claude/` is excluded by a global gitignore
-rule; anything placed there is local-only and will never appear in a commit.
+This file is tracked, so edits to it ship in a pull request like any other
+change. `.claude/` is excluded by a global gitignore rule — anything placed
+there is local-only and never reaches a commit.
 
 ## Provenance
 
-This is a hard fork of [`patman15/hdpv_ble`](https://github.com/patman15/hdpv_ble),
-detached from the fork network on 2026-08-01. Upstream's last commit to `main`
-was 2026-01-01 and this repo is a strict superset of it — there are no divergent
-upstream commits to merge.
+A hard fork of [`patman15/hdpv_ble`](https://github.com/patman15/hdpv_ble),
+detached on 2026-08-01. Upstream's last commit to `main` was 2026-01-01 and
+this repo is a strict superset of it, so the `upstream` remote is **reference
+only** and is never merged — `git diff upstream/main -- <path>` and
+`git show upstream/main:<path>` show the original.
 
-The `upstream` remote is kept for **reference only**, not for merging. When
-reworking something, `git diff upstream/main -- <path>` and
-`git show upstream/main:<path>` show the original implementation.
-
-Apache 2.0. Keep the `@author: patman15` headers and the LICENSE intact, and
-keep the attribution note in the README — §4(b) requires modified files to carry
-notice of the change.
+Apache 2.0. Keep the `@author: patman15` headers, the LICENSE and the README's
+attribution note intact — §4(b) requires modified files to carry notice of the
+change.
 
 ## Git conventions
 
@@ -56,26 +53,16 @@ scripts/            # standalone maintainer tools, not shipped to users
 for the Android app under Waydroid. The shell script was contributed and is not
 maintainer-tested; its header says so.
 
-```text
-custom_components/hunterdouglas_powerview_ble/
-├── __init__.py       # setup/unload, hub polling, shade discovery dispatch
-├── api.py            # PowerViewBLE transport: ShadeCmd, ShadeCapability, PVDeviceInfo
-├── config_flow.py    # ConfigFlow: home key entry, optional hub URL, discovery
-├── const.py          # DOMAIN, CONF_* keys, MFCT_ID, SIGNAL_NEW_SHADE
-├── coordinator.py    # PVCoordinator: PassiveBluetoothDataUpdateCoordinator
-├── cover.py          # cover entities (see the subclass ladder below)
-├── binary_sensor.py  # charging indicator
-├── button.py         # identify shade
-├── number.py         # velocity
-├── sensor.py         # battery SoC, RSSI
-├── diagnostics.py    # config-entry and device diagnostics download
-└── strings.json      # source strings; translations/ holds en only
-```
+`custom_components/hunterdouglas_powerview_ble/` holds the integration. Entity
+platforms are named for what they do; the rest are `__init__.py` (setup,
+unload, hub fetch, shade discovery dispatch), `api.py` (the `PowerViewBLE`
+transport, `ShadeCmd`, `ShadeCapability`) and `coordinator.py`
+(`PVCoordinator`). `translations/` holds `en` only.
 
-There is **no test suite**, and as of 2026-08-01 no test config either — the
-dead `[tool.pytest.ini_options]` block and `requirements_test.txt` were removed
-because nothing referenced them. Nothing enforces coverage. If you add tests,
-the config has to come back with them.
+There is **no test suite**, and no test config either — the dead
+`[tool.pytest.ini_options]` block and `requirements_test.txt` were removed on
+2026-08-01 because nothing referenced them. If you add tests, the config has to
+come back with them.
 
 ## How it works
 
@@ -90,31 +77,38 @@ the config has to come back with them.
   update. This is the main divergence from upstream; any doc that says
   otherwise is stale.
 - **There is no upgrade path from upstream and the README says so.** The config
-  flow is `VERSION = 2` against upstream's `1`, the entry data shape is
-  different (`home_key`/`hub_url` versus `manufacturer_data`), and no
-  `async_migrate_entry` exists — so Home Assistant fails upstream entries rather
-  than converting them. Users must delete their entries and set up fresh. If you
-  ever add a migration handler, the README's "Upgrading from the original
-  integration" section has to change with it. Bumping `VERSION` again without a
-  handler breaks *this* fork's own users the same way.
-- `CONF_HUB_URL` is optional and supplies exactly two things over HTTP: the home
-  key during the config flow, and each shade's friendly name (cached in
-  `entry.data` under `CONF_FRIENDLY_NAMES`). It once supplied `powerType` too;
-  that was removed in `6dd9a74` along with the BLE power-source detection, so
-  **battery entities are now created for every shade unconditionally** — see
-  issue #23. Anything claiming the hub reports battery status is stale.
-- `cover.py` is a subclass ladder — `PowerViewCover` → `PowerViewCoverTilt` →
-  `PowerViewCoverTiltOnClosed`, plus `PowerViewCoverTopDown` and
-  `PowerViewCoverTiltOnly`. Which one is instantiated depends on the type ID's
-  `ShadeCapability`. Adding a shade type means picking the right subclass, not
-  adding branching to the base class.
+  flow is `VERSION = 2` against upstream's `1`, the entry data shape differs,
+  and no `async_migrate_entry` exists, so Home Assistant fails upstream entries
+  rather than converting them. Bumping `VERSION` again without a handler breaks
+  *this* fork's own users the same way; adding one means updating the README's
+  "Upgrading from the original integration" section too.
+- `CONF_HUB_URL` is optional and supplies three things over HTTP: the home key
+  during the config flow, each shade's friendly name (cached in `entry.data`
+  under `CONF_FRIENDLY_NAMES`), and each shade's `powerType` (cached under
+  `CONF_POWER_TYPES`).
+- **The power source is detected, and battery entities are disabled rather
+  than withheld.** `_async_setup_shade` resolves it from the hub's record, the
+  `CONF_POWER_TYPES` cache, then a one-off `0xFFDE` GATT probe (a failed probe
+  is left uncached so the next restart retries).
+  `PVCoordinator.battery_powered` is biased towards yes: only
+  `POWER_TYPE_HARDWIRED` answers no, so an unreadable shade keeps its battery
+  entities and a hardwired one merely gets them disabled by default — a wrong
+  answer costs one toggle, not a missing sensor. Added in `548b53c`, closing
+  issue #23.
+- `cover.py` is a subclass ladder under `PowerViewCoverBase`, with a lift, a
+  tilt, a dual-rail TDBU and a dual-fabric Duolite branch. `_add_entities`
+  picks from the type ID's `ShadeCapability`, and one shade can yield several
+  entities — TDBU two, Duolite three. Adding a shade type means picking the
+  right subclass, not adding branching to the base class.
 
 ## Gotchas
 
 - **The maintainer owns hardwired shades only and cannot test battery
-  behaviour.** Anything touching battery SoC, the charging binary sensor, or the
-  hub's battery-powered flag is unverifiable locally — reason carefully from the
-  protocol and say plainly in the PR that it is untested.
+  behaviour.** Anything touching battery SoC or the charging binary sensor is
+  unverifiable locally — reason carefully from the protocol and say plainly in
+  the PR that it is untested. The hardwired half of power-type detection *is*
+  corroborated — six shades read `1` over GATT while their hub independently
+  reported `powerType=1` — which is why only those codes are acted on.
 - **`emu/` is GPLv2, not Apache 2.0.** The sketch links wolfSSL, whose license
   reaches the combined work, and `user_settings.h` is wolfSSL's own GPLv2
   template. This is deliberate, documented in `emu/README.md`, and **must not be
@@ -138,22 +132,16 @@ Don't edit the version by hand and don't create tags manually — run the
 `manifest.json`, tags the commit and creates the GitHub release that HACS reads.
 See `.github/RELEASING.md`.
 
-Versions are plain `X.Y.Z`. Upstream never tagged a release, so there is no tag
-history to collide with; this fork's first release starts from the normalised
-`0.24.0` in the manifest.
-
-Note that HACS shows release notes in Home Assistant's update dialog,
-cumulatively across every release between the user's installed version and the
-latest, so notes need to read well standalone.
+Versions are plain `X.Y.Z`. HACS shows release notes in Home Assistant's update
+dialog cumulatively, across every release between the user's installed version
+and the latest, so notes need to read well standalone.
 
 ## Validation
 
 Lint, codespell, hassfest and HACS validation run **on pull requests only**
-(`.github/workflows/lint.yml`, `codespell.yml`, `hassfest.yml`, `validate.yml`)
-— there is no push trigger, because nothing reaches `main` except through a PR
-and the PR run already checks the merge result. Each is also
-`workflow_dispatch`, so it can be run against `main` on demand before cutting a
-release. All must be green before a release is cut.
+(`.github/workflows/`) — nothing reaches `main` except through a PR, and the PR
+run already checks the merge result. Each is also `workflow_dispatch`, so it
+can be run against `main` before cutting a release. All must be green first.
 
 Lint and hassfest carry `paths` filters and are skipped by documentation-only
 changes; codespell and HACS validation have none. Do not make the *filtered*
@@ -162,10 +150,9 @@ paths filter blocks the PR indefinitely. Codespell and HACS validation always
 run, so they are safe to require.
 
 **A check that reads the whole repository must not live in a filtered
-workflow.** `codespell` was moved out of `lint.yml` for that reason: it scans
-every text file, but sitting behind lint's `**.py` filter meant a typo in a
-`.md` or `.sh` could not fail a PR, and would surface only on a manual run
-against `main` before a release.
+workflow.** `codespell` was moved out of `lint.yml` for exactly that reason: it
+scans every text file, but behind lint's `**.py` filter a typo in a `.md` or
+`.sh` could not fail a PR.
 
 Run locally before every commit — this is a recurring source of CI failures:
 
