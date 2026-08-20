@@ -167,9 +167,10 @@ CLOSED_POSITION: Final[int] = 0
 # get; pos3 and tilt are unscaled either way.
 #
 # Confirmed on hardware for pos2 and pos3 (every tilt command already sends
-# it). Pos1 uses the same encoding path now so dual-rail callers can leave the
-# top rail alone without restating a possibly-stale reading. The BLE emulator
-# does not implement the sentinel, so keep that in mind when testing there.
+# it). Pos1 is newer ground -- verified on a type-8 Duette TDBU, where it lets
+# a bottom-rail move leave the top alone instead of restating a possibly-stale
+# reading. The BLE emulator does not implement the sentinel, so it cannot be
+# checked there.
 KEEP_POSITION: Final[int] = 0x8000
 
 
@@ -287,7 +288,7 @@ class PowerViewBLE:
         # The pending command and the disconnect behaviour it wants. The two
         # travel together because the coroutine that ends up sending a
         # command is often not the caller that asked for it.
-        self._cmd_next: tuple[tuple[ShadeCmd, bytes], bool]
+        self._cmd_next: tuple[tuple[ShadeCmd, bytes], bool] | None = None
         self._cipher: Final[Cipher | None] = (
             Cipher(algorithms.AES(home_key), modes.CTR(bytes(16)))
             if len(home_key) == 16
@@ -345,7 +346,7 @@ class PowerViewBLE:
         await asyncio.wait_for(self._wait_event(), timeout=TIMEOUT)
         return seq
 
-    # general cmd: uint16_t cmd, uint8_t seqID, uint8_t data_len
+    # Merge helper for coalesced SET_POSITION payloads (see ``_cmd``).
     @staticmethod
     def _merge_set_position_payload(pending: bytes, new: bytes) -> bytes:
         """Merge two SET_POSITION payloads axis-by-axis.
@@ -365,13 +366,14 @@ class PowerViewBLE:
                 out[offset : offset + 2] = pending[offset : offset + 2]
         return bytes(out)
 
+    # general cmd: uint16_t cmd, uint8_t seqID, uint8_t data_len
     async def _cmd(self, cmd: tuple[ShadeCmd, bytes], disconnect: bool = True) -> None:
         # Commands coalesce rather than queue: one arriving while another is
         # in flight replaces the pending one, so dragging a slider does not
         # put every intermediate position on the wire. SET_POSITION is special:
         # Dual-rail entities often fire two moves back-to-back (top + bottom).
         # Replacing would drop one rail's target; merging KEEP axes keeps both.
-        if self._cmd_lock.locked() and getattr(self, "_cmd_next", None) is not None:
+        if self._cmd_lock.locked() and self._cmd_next is not None:
             pending_cmd, pending_disconnect = self._cmd_next
             if (
                 pending_cmd[0] == ShadeCmd.SET_POSITION
@@ -404,6 +406,8 @@ class PowerViewBLE:
                     # link is coming up still replaces/merges this one instead
                     # of being sent after it.
                     pending = self._cmd_next
+                    if pending is None:
+                        return
                     cmd_run, disconnect_run = pending
                     try:
                         seq = await self._transact(cmd_run)

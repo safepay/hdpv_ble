@@ -168,11 +168,13 @@ class PowerViewCoverBase(PassiveBluetoothCoordinatorEntity[PVCoordinator], Cover
     def _last_position(self, key: str) -> int | None:
         """Return the rounded ``key`` position however old, or None if absent.
 
-        For what this entity *sends*. Every position command has to restate
-        the axes it is not moving, and the last reading is the best value
-        there is for them -- the shade does not move on its own. Refusing to
-        build the command instead left tilt-only shades with no working
-        control at all once their reading aged out.
+        For what this entity *sends* when an axis still has to be restated
+        (tilt-on-closed, duolite, and any path that cannot use KEEP on that
+        axis). The last reading is the best value there is -- the shade does
+        not move on its own. Refusing to build the command instead left
+        tilt-only shades with no working control at all once their reading
+        aged out. Dual-rail TDBU bottom moves use KEEP for the other axis
+        instead, so they do not depend on this.
         """
         pos = self._coord.data.get(key)
         return round(pos) if pos is not None else None
