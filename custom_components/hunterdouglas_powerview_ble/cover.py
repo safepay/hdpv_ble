@@ -21,7 +21,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ConfigEntryType, async_setup_shade_platform
-from .api import CLOSED_POSITION, OPEN_POSITION, ShadeMove
+from .api import CLOSED_POSITION, KEEP_POSITION, OPEN_POSITION, ShadeMove
 from .const import DOMAIN, LOGGER
 from .coordinator import PVCoordinator
 
@@ -168,11 +168,13 @@ class PowerViewCoverBase(PassiveBluetoothCoordinatorEntity[PVCoordinator], Cover
     def _last_position(self, key: str) -> int | None:
         """Return the rounded ``key`` position however old, or None if absent.
 
-        For what this entity *sends*. Every position command has to restate
-        the axes it is not moving, and the last reading is the best value
-        there is for them -- the shade does not move on its own. Refusing to
-        build the command instead left tilt-only shades with no working
-        control at all once their reading aged out.
+        For what this entity *sends* when an axis still has to be restated
+        (tilt-on-closed, duolite, and any path that cannot use KEEP on that
+        axis). The last reading is the best value there is -- the shade does
+        not move on its own. Refusing to build the command instead left
+        tilt-only shades with no working control at all once their reading
+        aged out. Dual-rail TDBU bottom moves use KEEP for the other axis
+        instead, so they do not depend on this.
         """
         pos = self._coord.data.get(key)
         return round(pos) if pos is not None else None
@@ -526,15 +528,19 @@ class PowerViewCoverTDBUTop(PowerViewCoverBase):
 
     @callback
     def _get_shade_move(self, target: int) -> ShadeMove | None:
-        """Restate the top rail unchanged and drive position2 to the target.
+        """Drive position2; leave the top rail (pos1) unchanged via KEEP.
 
-        Restating takes the last reading, not a fresh one; the clamp above is
-        where a genuinely unknown rail stops the move.
+        Using KEEP (instead of restating the current top reading) lets a
+        concurrent top-rail command coalesce into one SET_POSITION that
+        carries both targets, instead of the bottom command overwriting the
+        top's intended position.
+
+        Pre-move clamps on each entity can still produce a crossed pair
+        (e.g. top→20 + bottom→70 from 100/0). On type-8 Duette firmware that
+        is fine: the shade refuses the cross and settles on the rail boundary
+        (observed: requested 20/70 ended at HA 70/70, device pos1+pos2=100).
         """
-        top_rail_raw = self._last_position(ATTR_CURRENT_POSITION)
-        if top_rail_raw is None:
-            return None
-        return ShadeMove(pos1=top_rail_raw, pos2=target)
+        return ShadeMove(pos1=KEEP_POSITION, pos2=target)
 
 
 class PowerViewCoverDuoliteBase(PowerViewCoverBase):
