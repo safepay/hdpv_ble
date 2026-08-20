@@ -534,6 +534,11 @@ class PowerViewCoverTDBUTop(PowerViewCoverBase):
         concurrent top-rail command coalesce into one SET_POSITION that
         carries both targets, instead of the bottom command overwriting the
         top's intended position.
+
+        Pre-move clamps on each entity can still produce a crossed pair
+        (e.g. top→20 + bottom→70 from 100/0). On type-8 Duette firmware that
+        is fine: the shade refuses the cross and settles on the rail boundary
+        (observed: requested 20/70 ended at HA 70/70, device pos1+pos2=100).
         """
         return ShadeMove(pos1=KEEP_POSITION, pos2=target)
 
