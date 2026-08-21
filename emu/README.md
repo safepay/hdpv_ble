@@ -15,6 +15,9 @@ main README for the full procedure.
   [Adafruit QT Py ESP32-S3](https://www.adafruit.com/product/5426)
 - ESP32 board definitions 3.0.x (tested on 3.0.7)
 - wolfSSL 5.7.x (tested on 5.7.6), installed through the Arduino library manager
+- The device used for adopting the emulator MUST use the UK region. For example,
+  on iPhones, go to Settings > General > Region & Language > Region and select
+  United Kingdom. You can change the region back to your home region after adopting
 
 `user_settings.h` is wolfSSL's configuration template and is included in the
 build automatically; it does not need editing.
