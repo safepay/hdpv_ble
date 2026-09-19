@@ -97,6 +97,10 @@ class ShadeResponder:
     def __init__(self) -> None:
         """Start unadopted, with no key and no encryption."""
         self._key: bytes = b""
+        # Set when a frame arrives that cannot be plaintext. Distinguishes
+        # "nothing connected" from "the identity is already taken", which
+        # are different problems for whoever is trying to capture a key.
+        self.saw_foreign_traffic: bool = False
 
     @property
     def home_key(self) -> bytes:
@@ -121,6 +125,22 @@ class ShadeResponder:
 
         plain = self._crypt(data) if self._key else data
         service_id, cmd_id, sequence, data_len = plain[:HEADER_LEN]
+
+        # A frame whose length field disagrees with what arrived is not
+        # plaintext: something is addressing this identity with a key we do
+        # not hold, which means the shade being impersonated is already
+        # adopted. Answering would put garbage on the wire, so say nothing
+        # and let the caller report why nothing was captured.
+        if data_len != len(plain) - HEADER_LEN:
+            LOGGER.debug(
+                "keycapture: implausible frame (len %d, got %d) -- peer is "
+                "probably encrypting with a key we do not have",
+                data_len,
+                len(plain) - HEADER_LEN,
+            )
+            self.saw_foreign_traffic = True
+            return None
+
         body = plain[HEADER_LEN : HEADER_LEN + data_len]
         LOGGER.debug(
             "keycapture: srv %02x cmd %02x seq %d len %d",
