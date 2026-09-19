@@ -42,6 +42,53 @@ SET_KEY_CMD: Final[tuple[int, int]] = (0xFB, 0x02)
 # scripts/shade_report.py).
 ACK_OK: Final[bytes] = b"\x00"
 
+# serviceID 0xFF, cmdID 0xDD: product info, gated on a one-byte selector.
+# The app opens an adoption with selector 5 and gives up if it is answered
+# with a bare ack, so this is the one command that must carry real data.
+PRODUCT_INFO_CMD: Final[tuple[int, int]] = (0xFF, 0xDD)
+SELECTOR_SHORT: Final[int] = 0x04
+SELECTOR_EXTENDED: Final[int] = 0x05
+# Two-byte rejection a shade returns for a selector it does not implement.
+REJECT_SELECTOR: Final[int] = 0x8C
+
+# Identity this emulated shade reports. The values are ours; the layout they
+# sit in is the one annotate_query() in scripts/shade_report.py documents
+# against real fw_rev=22 hardware -- byte 1 echoes the selector, serial at
+# 2-9, fw_rev 10-11, sw_rev 14-15, hw_rev 18-21, build id 22-25, type_id 26,
+# model 27. Real firmware answers selector 5 in 28 bytes.
+EMU_SERIAL: Final[bytes] = bytes.fromhex("0123456789abcdef")
+EMU_FW_REV: Final[int] = 22
+EMU_SW_REV: Final[int] = 391
+EMU_HW_REV: Final[int] = 171103
+EMU_BUILD_ID: Final[int] = 1015780
+EMU_TYPE_ID: Final[int] = 42
+EMU_MODEL_ID: Final[int] = 224
+
+
+def _product_info(selector: int) -> bytes:
+    """Return the product-info payload for one selector."""
+    if selector == SELECTOR_EXTENDED:
+        return (
+            bytes([0x00, SELECTOR_EXTENDED])
+            + EMU_SERIAL
+            + EMU_FW_REV.to_bytes(2, "little")
+            + bytes(2)
+            + EMU_SW_REV.to_bytes(2, "little")
+            + bytes(2)
+            + EMU_HW_REV.to_bytes(4, "little")
+            + EMU_BUILD_ID.to_bytes(4, "little")
+            + bytes([EMU_TYPE_ID, EMU_MODEL_ID])
+        )
+    if selector == SELECTOR_SHORT:
+        return (
+            bytes([0x00, SELECTOR_SHORT])
+            + (1).to_bytes(4, "little")
+            + EMU_SW_REV.to_bytes(2, "little")
+            + bytes(6)
+        )
+    return bytes([REJECT_SELECTOR, selector])
+
+
 
 @dataclass(frozen=True)
 class CaptureSupport:
@@ -150,9 +197,13 @@ class ShadeResponder:
             data_len,
         )
 
+        payload = ACK_OK
+        if (service_id, cmd_id) == PRODUCT_INFO_CMD:
+            payload = _product_info(body[0] if body else SELECTOR_EXTENDED)
+
         reply = bytes(
-            [service_id & RESPONSE_MASK, cmd_id, sequence, len(ACK_OK)]
-        ) + ACK_OK
+            [service_id & RESPONSE_MASK, cmd_id, sequence, len(payload)]
+        ) + payload
         # Encrypt against the key in force as the frame arrived, so the
         # acknowledgement below still goes out in the clear.
         if self._key:
