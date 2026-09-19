@@ -205,8 +205,8 @@ def _homekey_schema(hub_url_prefill: str = "") -> vol.Schema:
                         SelectOptionDict(
                             value="skip",
                             label=(
-                                "Skip (no key — controls disabled for "
-                                "encrypted shades)"
+                                "Skip — not needed if never set up "
+                                "in the PowerView app"
                             ),
                         ),
                     ]
