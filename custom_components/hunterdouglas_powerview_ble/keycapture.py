@@ -18,15 +18,14 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 import sys
-from typing import Final
+from typing import TYPE_CHECKING, Final
 
 from cryptography.hazmat.primitives.ciphers import Cipher, algorithms, modes
-from habluetooth import HaScanner
-
-from homeassistant.components import bluetooth
-from homeassistant.core import HomeAssistant, callback
 
 from .const import LOGGER
+
+if TYPE_CHECKING:
+    from homeassistant.core import HomeAssistant
 
 # Request layout is serviceID, cmdID, sequence, length, body -- the frame
 # _transact() builds. A reply echoes the first three with 0x10 cleared from
@@ -53,7 +52,6 @@ class CaptureSupport:
     adapter: str | None = None
 
 
-@callback
 def async_capture_support(hass: HomeAssistant) -> CaptureSupport:
     """Report whether a home key can be captured on this installation.
 
@@ -66,6 +64,13 @@ def async_capture_support(hass: HomeAssistant) -> CaptureSupport:
     checked here -- it needs the adapter's own details, and the payload is
     over the 31-byte legacy limit, so registration is the honest test.
     """
+    # Imported here, not at module scope: this keeps the responder below
+    # usable on a bare Linux host with only `cryptography` installed, which
+    # is how the BlueZ transport gets exercised away from Home Assistant.
+    from habluetooth import HaScanner  # noqa: PLC0415
+
+    from homeassistant.components import bluetooth  # noqa: PLC0415
+
     if not sys.platform.startswith("linux"):
         return CaptureSupport(False, "capture_not_linux")
 
