@@ -93,6 +93,14 @@ Both are stored with the config entry and persist across updates. To change
 them later, open the integration and choose **⋮ → Reconfigure**; the shades keep
 their entity IDs and settings.
 
+### Do you need a home key?
+
+Only for shades already set up in the PowerView app or by a hub — those
+encrypt every command. A new or factory-reset shade has no key, talks
+unencrypted, and works with **Skip** under *Key source*. If unsure, choose
+**Skip**: shades needing a key appear without controls, and one can be added
+later through **⋮ → Reconfigure**.
+
 ### Getting the home key
 
 Every shade in a home shares one key. If you have a G3 hub, the setup form will
