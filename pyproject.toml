@@ -194,3 +194,16 @@ split-on-trailing-comma = false
 # D-Bus GATT API. Deliberately not in requirements.txt - see emu/linux/README.md.
 module = ["dbus.*", "gi.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Installed only on Linux, where bluetooth_adapters and habluetooth already
+# require it; keycapture_bluez.py is imported lazily and never loads without
+# it. Absent on a Windows dev box, so mypy cannot see the stubs there.
+module = ["dbus_fast.*"]
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+# Same reason as the file-level ruff directive in keycapture_bluez.py: the
+# D-Bus signatures live in the annotations, so mypy cannot read them as types.
+module = ["custom_components.hunterdouglas_powerview_ble.keycapture_bluez"]
+ignore_errors = true
