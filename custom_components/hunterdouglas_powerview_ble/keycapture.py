@@ -89,6 +89,33 @@ def _product_info(selector: int) -> bytes:
     return bytes([REJECT_SELECTOR, selector])
 
 
+# serviceID 0xFA: scene storage. Adoption reads two scenes and writes two
+# back; a bare ack to the read stops it, a bare ack to the write does not.
+GET_SCENE_CMD: Final[tuple[int, int]] = (0xFA, 0x5B)
+SET_SCENE_CMD: Final[tuple[int, int]] = (0xFA, 0x5A)
+# Repeated locally rather than imported from api.py, which pulls in bleak and
+# Home Assistant; this module stays importable with only cryptography.
+KEEP_POSITION: Final[int] = 0x8000
+# Half open, in the hundredths-of-a-percent the position struct uses.
+SCENE_POSITION: Final[int] = 5000
+
+
+def _scene(body: bytes) -> bytes:
+    """Return the stored scene named by a get-scene request.
+
+    Both bytes of the request are echoed back, then the position struct
+    api.py sends -- pos1, pos2, pos3, tilt as little-endian u16, with the
+    rails this shade does not have left at KEEP_POSITION.
+    """
+    return (
+        bytes([0x00])
+        + (body[:2] + bytes(2))[:2]
+        + SCENE_POSITION.to_bytes(2, "little")
+        + KEEP_POSITION.to_bytes(2, "little") * 3
+        + bytes(7)
+    )
+
+
 
 @dataclass(frozen=True)
 class CaptureSupport:
@@ -200,6 +227,10 @@ class ShadeResponder:
         payload = ACK_OK
         if (service_id, cmd_id) == PRODUCT_INFO_CMD:
             payload = _product_info(body[0] if body else SELECTOR_EXTENDED)
+        elif (service_id, cmd_id) == GET_SCENE_CMD:
+            payload = _scene(body)
+        elif (service_id, cmd_id) == SET_SCENE_CMD:
+            payload = bytes([0x00]) + (body[:2] + bytes(2))[:2]
 
         reply = bytes(
             [service_id & RESPONSE_MASK, cmd_id, sequence, len(payload)]
