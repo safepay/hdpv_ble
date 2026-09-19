@@ -31,7 +31,6 @@ from dbus_fast import BusType, PropertyAccess, Variant
 from dbus_fast.aio import MessageBus
 from dbus_fast.service import ServiceInterface, dbus_property, method
 
-from .api import UUID_COV_SERVICE, UUID_DEV_SERVICE, UUID_TX
 from .const import LOGGER, MFCT_ID
 from .keycapture import (
     EMU_FW_REV,
@@ -41,6 +40,13 @@ from .keycapture import (
     EMU_TYPE_ID,
     ShadeResponder,
 )
+
+# The GATT identity presented. Byte-for-byte what api.py derives through
+# normalize_uuid_str(); spelled out here so this module needs neither bleak
+# nor Home Assistant and can be exercised on a bare Linux host.
+UUID_COV_SERVICE: Final[str] = "0000fdc1-0000-1000-8000-00805f9b34fb"
+UUID_DEV_SERVICE: Final[str] = "0000180a-0000-1000-8000-00805f9b34fb"
+UUID_TX: Final[str] = "cafe1001-c0ff-ee01-8000-a110ca7ab1e0"
 
 BLUEZ: Final[str] = "org.bluez"
 GATT_MANAGER: Final[str] = "org.bluez.GattManager1"
