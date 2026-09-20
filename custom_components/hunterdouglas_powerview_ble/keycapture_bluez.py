@@ -323,6 +323,19 @@ async def async_capture_key(adapter: str, timeout: float) -> tuple[bytes, bool]:
         gatt: Any = proxy.get_interface(GATT_MANAGER)
         advertising: Any = proxy.get_interface(ADV_MANAGER)
 
+        # BlueZ will say what the controller can actually do. MaxAdvLen of 31
+        # means legacy advertising only, and the payload here does not fit in
+        # 31 bytes -- BlueZ splits it across the scan response, which leaves
+        # the shade visible but is a sign the adapter is a Bluetooth 4.x one.
+        with contextlib.suppress(Exception):
+            caps = await advertising.get_supported_capabilities()
+            instances = await advertising.get_supported_instances()
+            LOGGER.debug(
+                "keycapture: adapter capabilities %s, %s advertising slots free",
+                {k: v.value for k, v in caps.items()},
+                instances,
+            )
+
         await gatt.call_register_application(ROOT, {})
         LOGGER.debug("keycapture: GATT application registered on %s", path)
         await advertising.call_register_advertisement(ADVERTISEMENT_PATH, {})
