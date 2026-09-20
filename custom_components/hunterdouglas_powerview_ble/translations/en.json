@@ -52,13 +52,22 @@
       "hub_http_error": "Hub returned an HTTP error",
       "hub_timeout": "Connection to hub timed out",
       "hub_protocol_error": "Hub returned an unexpected response",
-      "hub_url_required": "Enter the hub URL, or choose another key source if you do not have a hub"
+      "hub_url_required": "Enter the hub URL, or choose another key source if you do not have a hub",
+      "capture_nothing_seen": "Nothing tried to adopt the shade. In the PowerView app, add a shade and pick myPVcover, then try again.",
+      "capture_identity_taken": "A device is already using this shade identity with a key Home Assistant does not have. Delete myPVcover in the PowerView app, then try again.",
+      "capture_failed": "Capturing the key failed. Check the log for details.",
+      "capture_unsupported": "This installation cannot capture a key. It needs a local Bluetooth adapter — a Bluetooth proxy cannot advertise.",
+      "capture_not_linux": "Capturing a key needs BlueZ, which is Linux only.",
+      "capture_no_local_adapter": "Bluetooth here comes from a remote proxy, which can only scan. Capturing a key needs a local adapter on the machine running Home Assistant."
     },
     "abort": {
       "already_configured": "Device is already configured",
       "single_instance_allowed": "Already configured. Only a single configuration possible.",
       "reconfigure_successful": "Reconfiguration was successful",
       "already_in_progress": "PowerView Home setup is already in progress"
+    },
+    "progress": {
+      "capturing": "Add a shade in the PowerView app and pick myPVcover. Waiting for it to hand over the key…"
     }
   },
   "entity": {

@@ -114,16 +114,22 @@ pulls the same key over HTTP; plain Python, any OS, no hardware.
 **Without a gateway**, the key has to be taken from a shade or out of the
 PowerView app. Least effort first:
 
-1. **Emulate a shade on Linux.** [`emu/linux`](/emu/linux) makes a Linux host's
-   own Bluetooth adapter pretend to be a shade; adding `myPVcover` to your home
-   in the PowerView app hands the key over. Booting a live USB stick is enough —
-   nothing has to be installed, and the machine's own Bluetooth adapter will do.
-2. **Emulate a shade on an ESP32.** The [same emulator](/emu/PV_BLE_cover) as a
+1. **Let Home Assistant capture it.** Where Home Assistant runs on Linux with
+   its own Bluetooth adapter, the setup form offers **Capture it
+   automatically**: it advertises a shade called `myPVcover`, and adding that
+   shade in the PowerView app hands the key over, straight into the form. A
+   Bluetooth proxy cannot advertise, so the option appears only when there is
+   a local adapter.
+2. **Emulate a shade on Linux.** [`emu/linux`](/emu/linux) does the same thing
+   from another machine, for installs where Home Assistant cannot. Booting a
+   live USB stick is enough — nothing has to be installed, and the machine's
+   own Bluetooth adapter will do.
+3. **Emulate a shade on an ESP32.** The [same emulator](/emu/PV_BLE_cover) as a
    sketch, for an ESP32 with at least 2 MiB flash and 128 KiB RAM such as an
    [Adafruit QT Py ESP32-S3](https://www.adafruit.com/product/5426). Flash it,
    connect over serial, then adopt `myPVcover` as above; the log prints
    `set shade key: \xx\xx...`. Worth it only if you have the board already.
-3. **Read the PowerView app's database.** The key is stored there, so running
+4. **Read the PowerView app's database.** The key is stored there, so running
    the app under Android on a PC reaches it —
    [`scripts/extract_homekey_waydroid.sh`](scripts/extract_homekey_waydroid.sh)
    walks through installing Waydroid, sideloading the app and reading the key
@@ -131,7 +137,7 @@ PowerView app. Least effort first:
    [this community forum post](https://community.home-assistant.io/t/hunter-douglas-powerview-gen-3-integration/424836/228)
    describing the manual route.
 
-Delete the emulated shade from the app once you have the key — routes 1 and 2
+Delete `myPVcover` from the app once you have the key — routes 1 to 3 all
 leave it registered in your home otherwise.
 
 ### Connecting a hub

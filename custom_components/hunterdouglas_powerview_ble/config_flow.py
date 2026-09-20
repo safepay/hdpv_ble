@@ -3,7 +3,7 @@
 import asyncio
 import hashlib
 import struct
-from typing import Any
+from typing import Any, Final
 
 import aiohttp
 import voluptuous as vol
@@ -24,6 +24,7 @@ from homeassistant.helpers.selector import (
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .const import CONF_HOME_KEY, CONF_HUB_URL, DOMAIN, LOGGER, MFCT_ID
+from .keycapture import async_capture_support
 
 _DEFAULT_HUB_URL = "http://powerview-g3.local"
 
@@ -172,7 +173,13 @@ _HUB_ERROR_MAP: dict[type[Exception], str] = {
 }
 
 
-def _homekey_schema(hub_url_prefill: str = "") -> vol.Schema:
+# How long to advertise while the user opens the app and adds the shade.
+CAPTURE_TIMEOUT: Final[float] = 300.0
+
+
+def _homekey_schema(
+    hub_url_prefill: str = "", capture_supported: bool = False
+) -> vol.Schema:
     """Build the homekey form schema, pre-filling the hub URL field.
 
     ``hub_url_prefill`` is the gateway found over zeroconf, or the URL already
@@ -201,6 +208,19 @@ def _homekey_schema(hub_url_prefill: str = "") -> vol.Schema:
                         SelectOptionDict(
                             value="manual",
                             label="Enter key manually (32 hex characters)",
+                        ),
+                        *(
+                            [
+                                SelectOptionDict(
+                                    value="capture",
+                                    label=(
+                                        "Capture it automatically (Home "
+                                        "Assistant pretends to be a shade)"
+                                    ),
+                                )
+                            ]
+                            if capture_supported
+                            else []
                         ),
                         SelectOptionDict(
                             value="skip",
@@ -232,6 +252,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Initialize the config flow."""
         self._home_key: str = ""
         self._hub_url: str = ""
+        self._capture_task: asyncio.Task[tuple[bytes, bool]] | None = None
+        self._capture_origin: str = "user"
+        self._capture_error: str = ""
 
     def _existing_hub_entry(self) -> config_entries.ConfigEntry | None:
         """Return the existing hub (v2+) config entry, if any."""
@@ -257,13 +280,87 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """Render the key-source form, pre-filling the hub URL when discovered."""
         return self.async_show_form(
             step_id=step_id,
-            data_schema=_homekey_schema(self._hub_url),
+            data_schema=_homekey_schema(
+                self._hub_url, async_capture_support(self.hass).supported
+            ),
             errors=errors,
             description_placeholders={
                 "hub_url_example": _DEFAULT_HUB_URL,
                 **placeholders,
             },
         )
+
+    def _capture_requested(
+        self, user_input: dict[str, Any] | None, origin: str
+    ) -> bool:
+        """Note a request to capture a key, recording where to return to."""
+        if not user_input or user_input.get("key_method") != "capture":
+            return False
+        # Kept even though no key comes from it: the hub still supplies the
+        # friendly names, exactly as on the other routes.
+        self._hub_url = user_input.get(CONF_HUB_URL, "").rstrip("/")
+        self._capture_origin = origin
+        self._capture_error = ""
+        return True
+
+    async def _async_capture(self) -> tuple[bytes, bool]:
+        """Advertise as an unadopted shade until a key is written."""
+        support = async_capture_support(self.hass)
+        if not support.supported or support.adapter is None:
+            self._capture_error = support.reason or "capture_unsupported"
+            return b"", False
+        # Imported here, never at module scope: it needs dbus_fast, which
+        # exists only on Linux, and the checks above decide whether the host
+        # can do this at all.
+        from .keycapture_bluez import async_capture_key  # noqa: PLC0415
+
+        return await async_capture_key(support.adapter, CAPTURE_TIMEOUT)
+
+    async def async_step_capture(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Run the capture, showing progress while the user adopts the shade."""
+        if self._capture_task is None:
+            self._capture_task = self.hass.async_create_task(self._async_capture())
+        if not self._capture_task.done():
+            return self.async_show_progress(
+                step_id="capture",
+                progress_action="capturing",
+                progress_task=self._capture_task,
+            )
+        return self.async_show_progress_done(next_step_id="capture_done")
+
+    async def async_step_capture_done(
+        self, user_input: dict[str, Any] | None = None
+    ) -> ConfigFlowResult:
+        """Finish the flow with the captured key, or explain what went wrong."""
+        task, self._capture_task = self._capture_task, None
+        key, foreign = b"", False
+        if task is not None:
+            try:
+                key, foreign = task.result()
+            except Exception:  # noqa: BLE001
+                LOGGER.exception("home key capture failed")
+                self._capture_error = "capture_failed"
+
+        if key:
+            self._home_key = key.hex()
+            return await self._finish_capture()
+
+        if not self._capture_error:
+            # "Nothing connected at all" and "something connected but was
+            # encrypting with a key we do not hold" need different fixes.
+            self._capture_error = (
+                "capture_identity_taken" if foreign else "capture_nothing_seen"
+            )
+        errors = {"key_method": self._capture_error}
+        return self._show_homekey_form(self._capture_origin, errors)
+
+    async def _finish_capture(self) -> ConfigFlowResult:
+        """Complete whichever step asked for the capture."""
+        if self._capture_origin == "reconfigure":
+            return self._reconfigure_result(self._get_reconfigure_entry())
+        return await self._create_entry()
 
     def _validate_manual_key(
         self, user_input: dict[str, Any], errors: dict[str, str]
@@ -418,6 +515,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         """
         errors: dict[str, str] = {}
 
+        if self._capture_requested(user_input, "zeroconf_confirm"):
+            return await self.async_step_capture()
+
         if user_input is not None and await self._validate_homekey_input(
             user_input, errors
         ):
@@ -441,27 +541,38 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         entry = self._get_reconfigure_entry()
         errors: dict[str, str] = {}
 
+        if self._capture_requested(user_input, "reconfigure"):
+            return await self.async_step_capture()
+
         if user_input is None:
             # Open the form on what is configured now. The key itself is not
             # pre-filled -- it is a secret, and an empty box asks for a
             # decision rather than inviting a blind resubmit.
             self._hub_url = entry.data.get(CONF_HUB_URL, "")
         elif await self._validate_homekey_input(user_input, errors):
-            # Merged onto the existing data rather than rebuilt, so the cached
-            # friendly names survive. The unique ID is derived from the key, so
-            # it has to move with it.
-            data: dict[str, Any] = {**entry.data, CONF_HOME_KEY: self._home_key}
-            if self._hub_url:
-                data[CONF_HUB_URL] = self._hub_url
-            else:
-                data.pop(CONF_HUB_URL, None)
-            return self.async_update_reload_and_abort(
-                entry,
-                unique_id=_hub_unique_id(self._home_key),
-                data=data,
-            )
+            return self._reconfigure_result(entry)
 
         return self._show_homekey_form("reconfigure", errors)
+
+    def _reconfigure_result(
+        self, entry: config_entries.ConfigEntry
+    ) -> ConfigFlowResult:
+        """Write the key and hub URL back onto an existing entry.
+
+        Merged onto the existing data rather than rebuilt, so the cached
+        friendly names survive. The unique ID is derived from the key, so it
+        has to move with it.
+        """
+        data: dict[str, Any] = {**entry.data, CONF_HOME_KEY: self._home_key}
+        if self._hub_url:
+            data[CONF_HUB_URL] = self._hub_url
+        else:
+            data.pop(CONF_HUB_URL, None)
+        return self.async_update_reload_and_abort(
+            entry,
+            unique_id=_hub_unique_id(self._home_key),
+            data=data,
+        )
 
     async def async_step_user(
         self, user_input: dict[str, Any] | None = None
@@ -474,6 +585,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_abort(reason="single_instance_allowed")
 
         errors: dict[str, str] = {}
+
+        if self._capture_requested(user_input, "user"):
+            return await self.async_step_capture()
 
         if user_input is not None and await self._validate_homekey_input(
             user_input, errors
