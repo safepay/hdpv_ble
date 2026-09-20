@@ -24,11 +24,12 @@ PowerView app.
   only fits under extended advertising — this is what the `btmon` hint below
   is actually showing. A legacy-only 4.x adapter fails `RegisterAdvertisement`
   outright.
-- `python3-dbus` and `python3-gi` (PyGObject) — install via your
-  distro's package manager, e.g. `sudo apt install python3-dbus
-  python3-gi`. These wrap system D-Bus/GLib libraries and generally
-  don't install cleanly from PyPI.
-- The `cryptography` Python package (`pip install cryptography`).
+- `python3-dbus`, `python3-gi` (PyGObject) and `python3-cryptography` —
+  install from your distro, e.g. `sudo apt install python3-dbus python3-gi
+  python3-cryptography`. The first two wrap system D-Bus/GLib libraries and
+  rarely install cleanly from PyPI; on Debian 12 and derivatives `pip` refuses
+  to touch the system Python at all (PEP 668), and the script needs root, so a
+  virtualenv is awkward.
 - Root, or a polkit rule granting your user `org.bluez.*` — registering
   a GATT application and an LE advertisement are privileged BlueZ
   operations.
@@ -40,7 +41,9 @@ sudo python3 shade_emulator.py -v
 ```
 
 Pass `--adapter hci1` to pick an adapter other than the first one BlueZ
-reports as GATT/advertising-capable. `-v` logs every decoded message;
+reports as GATT/advertising-capable — adding a 5.0 dongle to a host that
+already has a radio gives you two, and the numbering is not guaranteed, so
+check `hciconfig -a` first. `-v` logs every decoded message;
 without it, only key events (registration, the extracted home key) are
 logged.
 
@@ -52,7 +55,9 @@ home key installed - paste into Home Assistant's home_key field: 0123456789abcde
 ```
 
 Paste that into the integration's config flow, then delete the
-emulated shade from the app.
+emulated shade from the app. Deleting it matters before any repeat run:
+while it is still in your home, the app talks to it encrypted with the key
+it installed, and the emulator has no way to answer.
 
 ## What's ported vs. what isn't
 
