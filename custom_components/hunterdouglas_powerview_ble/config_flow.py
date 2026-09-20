@@ -1,6 +1,7 @@
 """Config flow for Hunter Douglas PowerView BLE integration."""
 
 import asyncio
+import contextlib
 import hashlib
 import struct
 import time
@@ -12,7 +13,7 @@ import voluptuous as vol
 from homeassistant import config_entries
 from homeassistant.components.bluetooth import BluetoothServiceInfoBleak
 from homeassistant.config_entries import ConfigFlowResult
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.selector import (
     SelectOptionDict,
@@ -321,7 +322,22 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         self._hub_url = user_input.get(CONF_HUB_URL, "").rstrip("/")
         self._capture_origin = origin
         self._capture_error = ""
+        # Asking again restarts the window rather than rejoining the one
+        # already running, which otherwise appears to resume mid-countdown.
+        self._cancel_capture()
         return True
+
+    @callback
+    def _cancel_capture(self) -> None:
+        """Stop any capture in flight and forget it."""
+        task, self._capture_task = self._capture_task, None
+        if task is not None and not task.done():
+            task.cancel()
+
+    @callback
+    def async_remove(self) -> None:
+        """Stop advertising if the user abandons the flow."""
+        self._cancel_capture()
 
     async def _async_capture(self) -> tuple[bytes, bool]:
         """Advertise as an unadopted shade until a key is written."""
@@ -338,12 +354,21 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             capture = asyncio.create_task(
                 async_capture_key(support.adapter, CAPTURE_TIMEOUT)
             )
-            started = time.monotonic()
-            while not capture.done():
-                await asyncio.wait({capture}, timeout=CAPTURE_TICK)
-                elapsed = time.monotonic() - started
-                self.async_update_progress(min(elapsed / CAPTURE_TIMEOUT, 1.0))
-            return capture.result()
+            try:
+                started = time.monotonic()
+                while not capture.done():
+                    await asyncio.wait({capture}, timeout=CAPTURE_TICK)
+                    elapsed = time.monotonic() - started
+                    self.async_update_progress(min(elapsed / CAPTURE_TIMEOUT, 1.0))
+                return capture.result()
+            finally:
+                # Abandoning the flow cancels the step, but the task doing the
+                # advertising is a separate one -- without this it keeps the
+                # shade on the air, and the scanner paused, until it times out.
+                if not capture.done():
+                    capture.cancel()
+                    with contextlib.suppress(asyncio.CancelledError):
+                        await capture
 
     async def async_step_capture(
         self, user_input: dict[str, Any] | None = None
