@@ -451,6 +451,59 @@ async def async_max_adv_len(adapter: str) -> int | None:
         bus.disconnect()
 
 
+def _export_objects(
+    bus: MessageBus, responder: ShadeResponder, captured: asyncio.Event
+) -> list[str]:
+    """Export every GATT object on the bus and return their paths."""
+    bus.export(ROOT, _Application(_managed_objects()))
+    bus.export(COVER_SERVICE_PATH, _Service(UUID_COV_SERVICE))
+    bus.export(COVER_CHAR_PATH, _CoverCharacteristic(responder, captured))
+    bus.export(
+        COVER_XXX_PATH,
+        _InertCharacteristic(
+            UUID_XXX,
+            COVER_SERVICE_PATH,
+            ["notify", "write", "write-without-response"],
+        ),
+    )
+    bus.export(FW_SERVICE_PATH, _Service(UUID_FW_SERVICE))
+    bus.export(
+        FW_CHAR_PATH,
+        _InertCharacteristic(
+            UUID_FW,
+            FW_SERVICE_PATH,
+            ["read", "write", "write-without-response"],
+        ),
+    )
+    bus.export(BAT_SERVICE_PATH, _Service(UUID_BAT_SERVICE))
+    bus.export(
+        BAT_CHAR_PATH,
+        _InertCharacteristic(
+            UUID_BAT, BAT_SERVICE_PATH, ["read"], bytes([EMU_BATTERY])
+        ),
+    )
+    bus.export(DEV_SERVICE_PATH, _Service(UUID_DEV_SERVICE))
+    for index, (uuid, value) in enumerate(DEVICE_INFO):
+        bus.export(
+            f"{DEV_SERVICE_PATH}/char{index}",
+            _StaticCharacteristic(uuid, DEV_SERVICE_PATH, value),
+        )
+    bus.export(ADVERTISEMENT_PATH, _Advertisement())
+    return [
+        ROOT,
+        COVER_SERVICE_PATH,
+        COVER_CHAR_PATH,
+        COVER_XXX_PATH,
+        FW_SERVICE_PATH,
+        FW_CHAR_PATH,
+        BAT_SERVICE_PATH,
+        BAT_CHAR_PATH,
+        DEV_SERVICE_PATH,
+        ADVERTISEMENT_PATH,
+        *(f"{DEV_SERVICE_PATH}/char{i}" for i in range(len(DEVICE_INFO))),
+    ]
+
+
 async def async_capture_key(adapter: str, timeout: float) -> tuple[bytes, bool]:
     """Advertise as an unadopted shade until a home key is written.
 
@@ -462,62 +515,31 @@ async def async_capture_key(adapter: str, timeout: float) -> tuple[bytes, bool]:
     responder = ShadeResponder()
     captured = asyncio.Event()
     exported: list[str] = []
+    previous_alias: str | None = None
+    adapter_iface: Any = None
 
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
     try:
-        bus.export(ROOT, _Application(_managed_objects()))
-        bus.export(COVER_SERVICE_PATH, _Service(UUID_COV_SERVICE))
-        bus.export(COVER_CHAR_PATH, _CoverCharacteristic(responder, captured))
-        bus.export(
-            COVER_XXX_PATH,
-            _InertCharacteristic(
-                UUID_XXX,
-                COVER_SERVICE_PATH,
-                ["notify", "write", "write-without-response"],
-            ),
-        )
-        bus.export(FW_SERVICE_PATH, _Service(UUID_FW_SERVICE))
-        bus.export(
-            FW_CHAR_PATH,
-            _InertCharacteristic(
-                UUID_FW,
-                FW_SERVICE_PATH,
-                ["read", "write", "write-without-response"],
-            ),
-        )
-        bus.export(BAT_SERVICE_PATH, _Service(UUID_BAT_SERVICE))
-        bus.export(
-            BAT_CHAR_PATH,
-            _InertCharacteristic(
-                UUID_BAT, BAT_SERVICE_PATH, ["read"], bytes([EMU_BATTERY])
-            ),
-        )
-        bus.export(DEV_SERVICE_PATH, _Service(UUID_DEV_SERVICE))
-        for index, (uuid, value) in enumerate(DEVICE_INFO):
-            bus.export(
-                f"{DEV_SERVICE_PATH}/char{index}",
-                _StaticCharacteristic(uuid, DEV_SERVICE_PATH, value),
-            )
-        bus.export(ADVERTISEMENT_PATH, _Advertisement())
-        exported = [
-            ROOT,
-            COVER_SERVICE_PATH,
-            COVER_CHAR_PATH,
-            COVER_XXX_PATH,
-            FW_SERVICE_PATH,
-            FW_CHAR_PATH,
-            BAT_SERVICE_PATH,
-            BAT_CHAR_PATH,
-            DEV_SERVICE_PATH,
-            ADVERTISEMENT_PATH,
-            *(f"{DEV_SERVICE_PATH}/char{i}" for i in range(len(DEVICE_INFO))),
-        ]
+        exported = _export_objects(bus, responder, captured)
 
         path = f"/org/bluez/{adapter}"
         introspection = await bus.introspect(BLUEZ, path)
         proxy = bus.get_proxy_object(BLUEZ, path, introspection)
         gatt: Any = proxy.get_interface(GATT_MANAGER)
         advertising: Any = proxy.get_interface(ADV_MANAGER)
+        adapter_iface: Any = proxy.get_interface("org.bluez.Adapter1")
+
+        # BlueZ answers the Generic Access service itself, serving the
+        # adapter's Alias as the device name -- reads of it never reach this
+        # application. A peer that resolves our services and then leaves
+        # without touching anything has looked at something we do not serve,
+        # and the host's own name where a shade's should be is the candidate.
+        with contextlib.suppress(Exception):
+            previous_alias = await adapter_iface.get_alias()
+            await adapter_iface.set_alias(EMU_NAME)
+            LOGGER.debug(
+                "keycapture: adapter alias %r -> %r", previous_alias, EMU_NAME
+            )
 
         # BlueZ will say what the controller can actually do. MaxAdvLen of 31
         # means legacy advertising only, and the payload here does not fit in
@@ -548,6 +570,10 @@ async def async_capture_key(adapter: str, timeout: float) -> tuple[bytes, bool]:
         with contextlib.suppress(Exception):
             await gatt.call_unregister_application(ROOT)
     finally:
+        if previous_alias is not None:
+            with contextlib.suppress(Exception):
+                await adapter_iface.set_alias(previous_alias)
+                LOGGER.debug("keycapture: adapter alias restored to %r", previous_alias)
         for path_ in exported:
             with contextlib.suppress(Exception):
                 bus.unexport(path_)

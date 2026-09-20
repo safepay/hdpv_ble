@@ -26,7 +26,12 @@ from homeassistant.helpers.selector import (
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .const import CONF_HOME_KEY, CONF_HUB_URL, DOMAIN, LOGGER, MFCT_ID
-from .keycapture import EMU_NAME, async_capture_support, async_quiet_adapter
+from .keycapture import (
+    EMU_NAME,
+    async_capture_support,
+    async_is_own_advert,
+    async_quiet_adapter,
+)
 
 _DEFAULT_HUB_URL = "http://powerview-g3.local"
 
@@ -488,7 +493,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # Our own capture emulator advertises as a shade by design, so it
         # matches the discovery filter. Offering it as a device to set up
         # would be nonsense.
-        if discovery_info.name == EMU_NAME:
+        if discovery_info.name == EMU_NAME or async_is_own_advert(
+            self.hass, discovery_info.address
+        ):
             return self.async_abort(reason="not_supported")
 
         # Derive a home-wide unique ID from the home_id embedded in the BLE

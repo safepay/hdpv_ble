@@ -44,7 +44,7 @@ from .const import (
     SIGNAL_NEW_SHADE,
 )
 from .coordinator import PVCoordinator, shade_id_for
-from .keycapture import EMU_NAME
+from .keycapture import EMU_NAME, async_is_own_advert
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
@@ -195,7 +195,9 @@ def _resolve_friendly_name(
     return friendly_name
 
 
-def _is_shade_advert(service_info: BluetoothServiceInfoBleak) -> bool:
+def _is_shade_advert(
+    hass: HomeAssistant, service_info: BluetoothServiceInfoBleak
+) -> bool:
     """Whether this advertisement really came from a PowerView shade.
 
     Our own key-capture emulator advertises company ID 2073 and service UUID
@@ -218,6 +220,8 @@ def _is_shade_advert(service_info: BluetoothServiceInfoBleak) -> bool:
     length is the honest test.
     """
     if service_info.name == EMU_NAME:
+        return False
+    if async_is_own_advert(hass, service_info.address):
         return False
     return len(service_info.manufacturer_data.get(MFCT_ID, b"")) == V2_RECORD_LEN
 
@@ -279,7 +283,7 @@ async def _async_setup_shade(
     """Create a coordinator for a newly discovered shade."""
     address = service_info.address
 
-    if not _is_shade_advert(service_info):
+    if not _is_shade_advert(hass, service_info):
         # Rechecked on every advertisement this address sends, so a shade first
         # heard mid-packet is adopted as soon as a whole record arrives.
         LOGGER.debug("%s: no PowerView V2 record, not a shade", address)
@@ -386,7 +390,7 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntryType) -> bool
         # up across the coordinators rather than in the keys, which are shade
         # IDs -- an address we already track needs nothing doing, and one we do
         # not may still belong to a shade that has moved to it.
-        if _is_shade_advert(service_info) and not any(
+        if _is_shade_advert(hass, service_info) and not any(
             coord.address == service_info.address
             for coord in entry.runtime_data.values()
         ):

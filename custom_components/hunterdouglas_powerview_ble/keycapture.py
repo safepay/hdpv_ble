@@ -192,6 +192,25 @@ async def async_capture_support(hass: HomeAssistant) -> CaptureSupport:
     return CaptureSupport(True, adapter=adapter)
 
 
+def async_is_own_advert(hass: HomeAssistant, address: str) -> bool:
+    """Whether this advertisement is our own capture emulator.
+
+    Matching on the name does not work: the name rides in the scan response,
+    and a passively-scanning proxy reports the address instead. The address
+    is decisive -- it is the local adapter's own, because the emulator
+    advertises through it.
+    """
+    from habluetooth import HaScanner  # noqa: PLC0415
+
+    from homeassistant.components import bluetooth  # noqa: PLC0415
+
+    return any(
+        isinstance(scanner, HaScanner)
+        and scanner.source.upper() == address.upper()
+        for scanner in bluetooth.async_current_scanners(hass)
+    )
+
+
 @contextlib.asynccontextmanager
 async def async_quiet_adapter(
     hass: HomeAssistant, adapter: str
