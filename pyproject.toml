@@ -185,3 +185,12 @@ split-on-trailing-comma = false
 
 [tool.ruff.lint.per-file-ignores]
 "scripts/*" = ["T201"]
+# Standalone script directory, not a package: no __init__.py by design, so
+# ble_peripheral.py can be imported flat by shade_emulator.py.
+"emu/linux/*" = ["INP001"]
+
+[[tool.mypy.overrides]]
+# System packages (python3-dbus, python3-gi) that emu/linux/ needs for BlueZ's
+# D-Bus GATT API. Deliberately not in requirements.txt - see emu/linux/README.md.
+module = ["dbus.*", "gi.*"]
+ignore_missing_imports = true

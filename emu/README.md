@@ -4,6 +4,9 @@ An ESP32 sketch that pretends to be a Hunter Douglas PowerView shade. Adopting
 it into your home with the PowerView app makes the app hand over the home key,
 which the emulator prints to the serial console.
 
+No ESP32 on hand? [`emu/linux`](linux) runs the same emulator directly on a
+Linux host's own Bluetooth adapter through BlueZ.
+
 This is the only way to obtain a home key without a G3 gateway. If you have a
 gateway, [`scripts/extract_gateway3_homekey.py`](../scripts/extract_gateway3_homekey.py)
 is easier. See [Getting the home key](../README.md#getting-the-home-key) in the
@@ -23,9 +26,11 @@ build automatically; it does not need editing.
 
 **This directory is GPLv2, not Apache 2.0 like the rest of the repository.**
 The sketch links wolfSSL, whose license covers the combined work, and
-`user_settings.h` is wolfSSL's own GPLv2-licensed template. The emulator is a
-development tool: HACS installs only `custom_components/`, so this code is
-never distributed to users of the integration.
+`user_settings.h` is wolfSSL's own GPLv2-licensed template. [`emu/linux`](linux)
+doesn't link wolfSSL, but is GPLv2 as a derivative of this sketch and of
+BlueZ's own GPLv2-licensed example scripts. The emulator is a development
+tool: HACS installs only `custom_components/`, so this code is never
+distributed to users of the integration.
 
 Do not relicense these files to match the root LICENSE. Several people hold
 copyright in them.
