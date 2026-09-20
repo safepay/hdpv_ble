@@ -16,6 +16,8 @@ those are GPLv2 and this ships under the repository's Apache licence.
 
 from __future__ import annotations
 
+from collections.abc import AsyncIterator
+import contextlib
 from dataclasses import dataclass
 import sys
 from typing import TYPE_CHECKING, Final
@@ -165,6 +167,49 @@ def async_capture_support(hass: HomeAssistant) -> CaptureSupport:
         local[0].adapter,
     )
     return CaptureSupport(True, adapter=local[0].adapter)
+
+
+@contextlib.asynccontextmanager
+async def async_quiet_adapter(
+    hass: HomeAssistant, adapter: str
+) -> AsyncIterator[None]:
+    """Stop Home Assistant scanning on adapter for the duration.
+
+    A controller has to divide its time between scanning as a central and
+    advertising as a peripheral, and an installation with several shades
+    keeps the scanner busy continuously. On a weaker adapter that leaves an
+    incoming connection unable to complete: the shade is advertised and the
+    app offers it, but adoption never starts.
+
+    Reaching into Home Assistant's Bluetooth stack like this is not
+    something an integration should do lightly, so it is confined to the
+    capture window and always undone. Any Bluetooth proxy keeps scanning
+    throughout; only this one adapter goes quiet.
+    """
+    from habluetooth import HaScanner  # noqa: PLC0415
+
+    from homeassistant.components import bluetooth  # noqa: PLC0415
+
+    scanner = next(
+        (
+            candidate
+            for candidate in bluetooth.async_current_scanners(hass)
+            if isinstance(candidate, HaScanner) and candidate.adapter == adapter
+        ),
+        None,
+    )
+    if scanner is None:
+        yield
+        return
+
+    LOGGER.info("keycapture: pausing Home Assistant's scanner on %s", adapter)
+    await scanner.async_stop()
+    try:
+        yield
+    finally:
+        LOGGER.info("keycapture: resuming scanning on %s", adapter)
+        with contextlib.suppress(Exception):
+            await scanner.async_start()
 
 
 class ShadeResponder:

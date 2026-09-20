@@ -25,7 +25,7 @@ from homeassistant.helpers.selector import (
 from homeassistant.helpers.service_info.zeroconf import ZeroconfServiceInfo
 
 from .const import CONF_HOME_KEY, CONF_HUB_URL, DOMAIN, LOGGER, MFCT_ID
-from .keycapture import async_capture_support
+from .keycapture import async_capture_support, async_quiet_adapter
 
 _DEFAULT_HUB_URL = "http://powerview-g3.local"
 
@@ -333,15 +333,16 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # can do this at all.
         from .keycapture_bluez import async_capture_key  # noqa: PLC0415
 
-        capture = asyncio.create_task(
-            async_capture_key(support.adapter, CAPTURE_TIMEOUT)
-        )
-        started = time.monotonic()
-        while not capture.done():
-            await asyncio.wait({capture}, timeout=CAPTURE_TICK)
-            elapsed = time.monotonic() - started
-            self.async_update_progress(min(elapsed / CAPTURE_TIMEOUT, 1.0))
-        return capture.result()
+        async with async_quiet_adapter(self.hass, support.adapter):
+            capture = asyncio.create_task(
+                async_capture_key(support.adapter, CAPTURE_TIMEOUT)
+            )
+            started = time.monotonic()
+            while not capture.done():
+                await asyncio.wait({capture}, timeout=CAPTURE_TICK)
+                elapsed = time.monotonic() - started
+                self.async_update_progress(min(elapsed / CAPTURE_TIMEOUT, 1.0))
+            return capture.result()
 
     async def async_step_capture(
         self, user_input: dict[str, Any] | None = None
