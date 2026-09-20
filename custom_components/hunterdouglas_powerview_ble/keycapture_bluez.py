@@ -48,6 +48,15 @@ from .keycapture import (
 UUID_COV_SERVICE: Final[str] = "0000fdc1-0000-1000-8000-00805f9b34fb"
 UUID_DEV_SERVICE: Final[str] = "0000180a-0000-1000-8000-00805f9b34fb"
 UUID_TX: Final[str] = "cafe1001-c0ff-ee01-8000-a110ca7ab1e0"
+# The rest of the shade's GATT surface. Nothing here carries the protocol,
+# but the PowerView app resolves services and walks away without touching
+# anything if they are absent, so a shade has to present all of them.
+UUID_XXX: Final[str] = "cafe1002-c0ff-ee01-8000-a110ca7ab1e0"
+UUID_FW_SERVICE: Final[str] = "cafe8000-c0ff-ee01-8000-a110ca7ab1e0"
+UUID_FW: Final[str] = "cafe8003-c0ff-ee01-8000-a110ca7ab1e0"
+UUID_BAT_SERVICE: Final[str] = "0000180f-0000-1000-8000-00805f9b34fb"
+UUID_BAT: Final[str] = "00002a19-0000-1000-8000-00805f9b34fb"
+EMU_BATTERY: Final[int] = 100
 
 BLUEZ: Final[str] = "org.bluez"
 GATT_MANAGER: Final[str] = "org.bluez.GattManager1"
@@ -60,6 +69,11 @@ OBJECT_MANAGER: Final[str] = "org.freedesktop.DBus.ObjectManager"
 ROOT: Final[str] = "/org/hdpv/keycapture"
 COVER_SERVICE_PATH: Final[str] = f"{ROOT}/service0"
 COVER_CHAR_PATH: Final[str] = f"{COVER_SERVICE_PATH}/char0"
+COVER_XXX_PATH: Final[str] = f"{COVER_SERVICE_PATH}/char1"
+FW_SERVICE_PATH: Final[str] = f"{ROOT}/service2"
+FW_CHAR_PATH: Final[str] = f"{FW_SERVICE_PATH}/char0"
+BAT_SERVICE_PATH: Final[str] = f"{ROOT}/service3"
+BAT_CHAR_PATH: Final[str] = f"{BAT_SERVICE_PATH}/char0"
 DEV_SERVICE_PATH: Final[str] = f"{ROOT}/service1"
 ADVERTISEMENT_PATH: Final[str] = f"{ROOT}/advertisement0"
 
@@ -134,6 +148,47 @@ class _StaticCharacteristic(ServiceInterface):
         # our GATT tree: no reads and no writes means nothing ever connected.
         LOGGER.debug("keycapture: read of %s", self._uuid)
         return self._value
+
+
+class _InertCharacteristic(ServiceInterface):
+    """Present and writable, but carries nothing: only logs what arrives."""
+
+    def __init__(
+        self, uuid: str, service_path: str, flags: list[str], value: bytes = b""
+    ) -> None:
+        """Create a characteristic with the given flags under service_path."""
+        super().__init__(GATT_CHARACTERISTIC)
+        self._uuid = uuid
+        self._service_path = service_path
+        self._flags = flags
+        self._value = value
+
+    @dbus_property(access=PropertyAccess.READ)
+    def UUID(self) -> "s":
+        """Return the characteristic UUID."""
+        return self._uuid
+
+    @dbus_property(access=PropertyAccess.READ)
+    def Service(self) -> "o":
+        """Return the owning service's object path."""
+        return self._service_path
+
+    @dbus_property(access=PropertyAccess.READ)
+    def Flags(self) -> "as":
+        """Return the characteristic's GATT flags."""
+        return self._flags
+
+    @method()
+    def ReadValue(self, options: "a{sv}") -> "ay":
+        """Serve the stored value."""
+        LOGGER.debug("keycapture: read of %s", self._uuid)
+        return self._value
+
+    @method()
+    def WriteValue(self, value: "ay", options: "a{sv}") -> None:
+        """Log a write and keep it."""
+        LOGGER.debug("keycapture: write to %s: %s", self._uuid, bytes(value).hex(" "))
+        self._value = bytes(value)
 
 
 class _CoverCharacteristic(ServiceInterface):
@@ -264,6 +319,43 @@ def _managed_objects() -> dict[str, dict[str, dict[str, Variant]]]:
                 ),
             }
         },
+        COVER_XXX_PATH: {
+            GATT_CHARACTERISTIC: {
+                "Service": Variant("o", COVER_SERVICE_PATH),
+                "UUID": Variant("s", UUID_XXX),
+                "Flags": Variant(
+                    "as", ["notify", "write", "write-without-response"]
+                ),
+            }
+        },
+        FW_SERVICE_PATH: {
+            GATT_SERVICE: {
+                "UUID": Variant("s", UUID_FW_SERVICE),
+                "Primary": Variant("b", True),
+            }
+        },
+        FW_CHAR_PATH: {
+            GATT_CHARACTERISTIC: {
+                "Service": Variant("o", FW_SERVICE_PATH),
+                "UUID": Variant("s", UUID_FW),
+                "Flags": Variant(
+                    "as", ["read", "write", "write-without-response"]
+                ),
+            }
+        },
+        BAT_SERVICE_PATH: {
+            GATT_SERVICE: {
+                "UUID": Variant("s", UUID_BAT_SERVICE),
+                "Primary": Variant("b", True),
+            }
+        },
+        BAT_CHAR_PATH: {
+            GATT_CHARACTERISTIC: {
+                "Service": Variant("o", BAT_SERVICE_PATH),
+                "UUID": Variant("s", UUID_BAT),
+                "Flags": Variant("as", ["read"]),
+            }
+        },
         DEV_SERVICE_PATH: {
             GATT_SERVICE: {
                 "UUID": Variant("s", UUID_DEV_SERVICE),
@@ -376,6 +468,30 @@ async def async_capture_key(adapter: str, timeout: float) -> tuple[bytes, bool]:
         bus.export(ROOT, _Application(_managed_objects()))
         bus.export(COVER_SERVICE_PATH, _Service(UUID_COV_SERVICE))
         bus.export(COVER_CHAR_PATH, _CoverCharacteristic(responder, captured))
+        bus.export(
+            COVER_XXX_PATH,
+            _InertCharacteristic(
+                UUID_XXX,
+                COVER_SERVICE_PATH,
+                ["notify", "write", "write-without-response"],
+            ),
+        )
+        bus.export(FW_SERVICE_PATH, _Service(UUID_FW_SERVICE))
+        bus.export(
+            FW_CHAR_PATH,
+            _InertCharacteristic(
+                UUID_FW,
+                FW_SERVICE_PATH,
+                ["read", "write", "write-without-response"],
+            ),
+        )
+        bus.export(BAT_SERVICE_PATH, _Service(UUID_BAT_SERVICE))
+        bus.export(
+            BAT_CHAR_PATH,
+            _InertCharacteristic(
+                UUID_BAT, BAT_SERVICE_PATH, ["read"], bytes([EMU_BATTERY])
+            ),
+        )
         bus.export(DEV_SERVICE_PATH, _Service(UUID_DEV_SERVICE))
         for index, (uuid, value) in enumerate(DEVICE_INFO):
             bus.export(
@@ -387,6 +503,11 @@ async def async_capture_key(adapter: str, timeout: float) -> tuple[bytes, bool]:
             ROOT,
             COVER_SERVICE_PATH,
             COVER_CHAR_PATH,
+            COVER_XXX_PATH,
+            FW_SERVICE_PATH,
+            FW_CHAR_PATH,
+            BAT_SERVICE_PATH,
+            BAT_CHAR_PATH,
             DEV_SERVICE_PATH,
             ADVERTISEMENT_PATH,
             *(f"{DEV_SERVICE_PATH}/char{i}" for i in range(len(DEVICE_INFO))),
