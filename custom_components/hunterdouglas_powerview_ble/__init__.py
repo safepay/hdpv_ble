@@ -44,6 +44,7 @@ from .const import (
     SIGNAL_NEW_SHADE,
 )
 from .coordinator import PVCoordinator, shade_id_for
+from .keycapture import EMU_NAME
 
 PLATFORMS: list[Platform] = [
     Platform.BINARY_SENSOR,
@@ -197,6 +198,11 @@ def _resolve_friendly_name(
 def _is_shade_advert(service_info: BluetoothServiceInfoBleak) -> bool:
     """Whether this advertisement really came from a PowerView shade.
 
+    Our own key-capture emulator advertises company ID 2073 and service UUID
+    fdc1 because it has to look like a shade to the PowerView app, which
+    means it matches here too -- it would be discovered as a shade to set up
+    while it is on the air. It is excluded by name.
+
     Passing Home Assistant's Bluetooth matcher is not enough. The matcher tests
     company ID 2073 and service UUID fdc1 against `BluetoothServiceInfoBleak`,
     which is a *union* of everything an address has ever advertised -- both
@@ -211,6 +217,8 @@ def _is_shade_advert(service_info: BluetoothServiceInfoBleak) -> bool:
     that company ID last carried. A shade always puts a V2 record there, so its
     length is the honest test.
     """
+    if service_info.name == EMU_NAME:
+        return False
     return len(service_info.manufacturer_data.get(MFCT_ID, b"")) == V2_RECORD_LEN
 
 

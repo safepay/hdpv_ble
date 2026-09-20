@@ -39,6 +39,11 @@ KEY_LEN: Final[int] = 16
 # serviceID 0xFB, cmdID 0x02: the write that installs a home key.
 SET_KEY_CMD: Final[tuple[int, int]] = (0xFB, 0x02)
 
+# The name the emulated shade advertises under. Also what identifies it to
+# the rest of the integration, which would otherwise discover its own
+# advertisement and offer it as a shade to set up.
+EMU_NAME: Final[str] = "myPVcover"
+
 # Bytes the advertisement needs: flags, the 128-bit service UUID,
 # manufacturer data and the local name. Past the 31-byte legacy limit, so
 # it wants a controller with extended advertising.

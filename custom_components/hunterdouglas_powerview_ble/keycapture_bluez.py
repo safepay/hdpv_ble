@@ -35,6 +35,7 @@ from .const import LOGGER, MFCT_ID
 from .keycapture import (
     EMU_FW_REV,
     EMU_HW_REV,
+    EMU_NAME,
     EMU_SERIAL,
     EMU_SW_REV,
     EMU_TYPE_ID,
@@ -61,9 +62,6 @@ COVER_SERVICE_PATH: Final[str] = f"{ROOT}/service0"
 COVER_CHAR_PATH: Final[str] = f"{COVER_SERVICE_PATH}/char0"
 DEV_SERVICE_PATH: Final[str] = f"{ROOT}/service1"
 ADVERTISEMENT_PATH: Final[str] = f"{ROOT}/advertisement0"
-
-# The name the PowerView app offers to adopt.
-EMU_NAME: Final[str] = "myPVcover"
 
 # Manufacturer payload, 9 bytes as the integration's own decoder expects
 # (dec_manufacturer_data in api.py). Bytes 0-1 are the home_id, and zero

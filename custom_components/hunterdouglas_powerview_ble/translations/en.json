@@ -65,7 +65,8 @@
       "already_configured": "Device is already configured",
       "single_instance_allowed": "Already configured. Only a single configuration possible.",
       "reconfigure_successful": "Reconfiguration was successful",
-      "already_in_progress": "PowerView Home setup is already in progress"
+      "already_in_progress": "PowerView Home setup is already in progress",
+      "not_supported": "This is Home Assistant's own key-capture shade, not a real one."
     },
     "progress": {
       "capturing": "Add a shade in the PowerView app and pick myPVcover. Waiting up to {timeout} for it to hand over the key."
