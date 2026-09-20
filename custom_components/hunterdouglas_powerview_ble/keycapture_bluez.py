@@ -311,19 +311,26 @@ async def _watch_connections(bus: MessageBus) -> None:
     def handler(msg: Message) -> None:
         if msg.message_type is not MessageType.SIGNAL:
             return
+        # ServicesResolved is the interesting one: a peer that connects but
+        # never resolves services has failed GATT discovery, which looks
+        # identical from here to one that simply never wrote anything.
+        watched = ("Connected", "ServicesResolved", "Paired", "Bonded")
         if msg.member == "PropertiesChanged" and len(msg.body) > 1:
             changed = msg.body[1]
-            if "Connected" in changed:
+            state = {k: changed[k].value for k in watched if k in changed}
+            if state:
                 LOGGER.info(
-                    "keycapture: %s connected=%s",
+                    "keycapture: %s %s",
                     str(msg.path).rsplit("/", 1)[-1],
-                    changed["Connected"].value,
+                    state,
                 )
         elif msg.member == "InterfacesAdded" and len(msg.body) > 1:
-            if "org.bluez.Device1" in msg.body[1]:
-                LOGGER.debug(
-                    "keycapture: BlueZ saw device %s",
+            props = msg.body[1].get("org.bluez.Device1")
+            if props is not None:
+                LOGGER.info(
+                    "keycapture: BlueZ saw device %s %s",
                     str(msg.body[0]).rsplit("/", 1)[-1],
+                    {k: props[k].value for k in watched if k in props},
                 )
 
     bus.add_message_handler(handler)
