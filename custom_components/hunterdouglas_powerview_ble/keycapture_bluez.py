@@ -27,7 +27,7 @@ import asyncio
 import contextlib
 from typing import Any, Final
 
-from dbus_fast import BusType, PropertyAccess, Variant
+from dbus_fast import BusType, Message, MessageType, PropertyAccess, Variant
 from dbus_fast.aio import MessageBus
 from dbus_fast.service import ServiceInterface, dbus_property, method
 
@@ -284,6 +284,51 @@ def _managed_objects() -> dict[str, dict[str, dict[str, Variant]]]:
     return tree
 
 
+async def _watch_connections(bus: MessageBus) -> None:
+    """Log every BlueZ device that connects or disconnects while we advertise.
+
+    Without this a capture that sees no writes is ambiguous: the peer may
+    never have reached us at all, or it may have connected and then given up
+    part way through GATT. BlueZ announces both on the bus.
+    """
+    for rule in (
+        "type='signal',interface='org.freedesktop.DBus.Properties',"
+        "member='PropertiesChanged',arg0='org.bluez.Device1'",
+        "type='signal',interface='org.freedesktop.DBus.ObjectManager',"
+        "member='InterfacesAdded'",
+    ):
+        await bus.call(
+            Message(
+                destination="org.freedesktop.DBus",
+                path="/org/freedesktop/DBus",
+                interface="org.freedesktop.DBus",
+                member="AddMatch",
+                signature="s",
+                body=[rule],
+            )
+        )
+
+    def handler(msg: Message) -> None:
+        if msg.message_type is not MessageType.SIGNAL:
+            return
+        if msg.member == "PropertiesChanged" and len(msg.body) > 1:
+            changed = msg.body[1]
+            if "Connected" in changed:
+                LOGGER.info(
+                    "keycapture: %s connected=%s",
+                    str(msg.path).rsplit("/", 1)[-1],
+                    changed["Connected"].value,
+                )
+        elif msg.member == "InterfacesAdded" and len(msg.body) > 1:
+            if "org.bluez.Device1" in msg.body[1]:
+                LOGGER.debug(
+                    "keycapture: BlueZ saw device %s",
+                    str(msg.body[0]).rsplit("/", 1)[-1],
+                )
+
+    bus.add_message_handler(handler)
+
+
 async def async_max_adv_len(adapter: str) -> int | None:
     """Return the longest advertisement this adapter will take, or None.
 
@@ -360,6 +405,9 @@ async def async_capture_key(adapter: str, timeout: float) -> tuple[bytes, bool]:
                 {k: v.value for k, v in caps.items()},
                 instances,
             )
+
+        with contextlib.suppress(Exception):
+            await _watch_connections(bus)
 
         await gatt.call_register_application(ROOT, {})
         LOGGER.debug("keycapture: GATT application registered on %s", path)
