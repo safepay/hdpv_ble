@@ -195,15 +195,30 @@ def _homekey_schema(
     -- so clearing the hub URL handed back the very URL being deleted, and the
     field could not be emptied at all. A `suggested_value` only seeds what the
     box opens on, leaving an emptied field genuinely absent.
+
+    The selected method follows what is actually available. Defaulting to the
+    hub meant anyone without one opened the form pre-set to the single route
+    that could not work for them, and the hub option says so in its own label
+    rather than only failing once submitted.
     """
+    if hub_url_prefill:
+        default_method = "hub"
+    elif capture_supported:
+        default_method = "capture"
+    else:
+        default_method = "manual"
+
     return vol.Schema(
         {
-            vol.Required("key_method", default="hub"): SelectSelector(
+            vol.Required("key_method", default=default_method): SelectSelector(
                 SelectSelectorConfig(
                     options=[
                         SelectOptionDict(
                             value="hub",
-                            label="Fetch automatically from PowerView hub",
+                            label=(
+                                "Fetch from a PowerView hub (needs the URL "
+                                "below, and the hub powered on)"
+                            ),
                         ),
                         SelectOptionDict(
                             value="manual",
