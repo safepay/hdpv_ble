@@ -3,6 +3,7 @@
 import asyncio
 import hashlib
 import struct
+import time
 from typing import Any, Final
 
 import aiohttp
@@ -175,6 +176,9 @@ _HUB_ERROR_MAP: dict[type[Exception], str] = {
 
 # How long to advertise while the user opens the app and adds the shade.
 CAPTURE_TIMEOUT: Final[float] = 300.0
+# How often to push the progress bar forward while waiting. A spinner alone
+# says nothing about how long is left; the bar fills over CAPTURE_TIMEOUT.
+CAPTURE_TICK: Final[float] = 2.0
 
 
 def _homekey_schema(
@@ -329,7 +333,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         # can do this at all.
         from .keycapture_bluez import async_capture_key  # noqa: PLC0415
 
-        return await async_capture_key(support.adapter, CAPTURE_TIMEOUT)
+        capture = asyncio.create_task(
+            async_capture_key(support.adapter, CAPTURE_TIMEOUT)
+        )
+        started = time.monotonic()
+        while not capture.done():
+            await asyncio.wait({capture}, timeout=CAPTURE_TICK)
+            elapsed = time.monotonic() - started
+            self.async_update_progress(min(elapsed / CAPTURE_TIMEOUT, 1.0))
+        return capture.result()
 
     async def async_step_capture(
         self, user_input: dict[str, Any] | None = None
@@ -341,6 +353,9 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             return self.async_show_progress(
                 step_id="capture",
                 progress_action="capturing",
+                description_placeholders={
+                    "timeout": f"{CAPTURE_TIMEOUT / 60:.0f} minutes"
+                },
                 progress_task=self._capture_task,
             )
         return self.async_show_progress_done(next_step_id="capture_done")

@@ -67,7 +67,7 @@
       "already_in_progress": "PowerView Home setup is already in progress"
     },
     "progress": {
-      "capturing": "Add a shade in the PowerView app and pick myPVcover. Waiting for it to hand over the key…"
+      "capturing": "Add a shade in the PowerView app and pick myPVcover. Waiting up to {timeout} for it to hand over the key."
     }
   },
   "entity": {
