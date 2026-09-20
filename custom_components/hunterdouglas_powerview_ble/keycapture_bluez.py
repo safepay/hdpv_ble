@@ -179,6 +179,13 @@ class _CoverCharacteristic(ServiceInterface):
     @method()
     def WriteValue(self, value: "ay", options: "a{sv}") -> None:
         """Run a written frame through the responder and notify the reply."""
+        # BlueZ names the peer here; the object path ends in its address.
+        # Worth logging: a capture that fails because the shade identity is
+        # already registered is otherwise indistinguishable from silence,
+        # and this says which device to go and remove it from.
+        device = options.get("device")
+        peer = str(device.value).rsplit("/", 1)[-1] if device else "unknown"
+        LOGGER.debug("keycapture: write from %s", peer)
         reply = self._responder.handle(bytes(value))
         if reply is None:
             return
