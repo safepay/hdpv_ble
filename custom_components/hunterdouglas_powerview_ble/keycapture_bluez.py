@@ -132,6 +132,9 @@ class _StaticCharacteristic(ServiceInterface):
     @method()
     def ReadValue(self, options: "a{sv}") -> "ay":
         """Serve the fixed value."""
+        # Logged because it is the first sign a peer got as far as reading
+        # our GATT tree: no reads and no writes means nothing ever connected.
+        LOGGER.debug("keycapture: read of %s", self._uuid)
         return self._value
 
 
@@ -169,11 +172,13 @@ class _CoverCharacteristic(ServiceInterface):
     @method()
     def StartNotify(self) -> None:
         """Record that the peer subscribed to notifications."""
+        LOGGER.debug("keycapture: peer subscribed to notifications")
         self._notifying = True
 
     @method()
     def StopNotify(self) -> None:
         """Record that the peer unsubscribed."""
+        LOGGER.debug("keycapture: peer unsubscribed from notifications")
         self._notifying = False
 
     @method()

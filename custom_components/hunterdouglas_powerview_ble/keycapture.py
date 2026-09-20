@@ -156,6 +156,14 @@ def async_capture_support(hass: HomeAssistant) -> CaptureSupport:
     if not local:
         return CaptureSupport(False, "capture_no_local_adapter")
 
+    # Logged because the choice matters and is invisible otherwise: an
+    # installation with more than one local adapter gets the first, which
+    # may well be the one Home Assistant is busiest scanning on.
+    LOGGER.debug(
+        "keycapture: local adapters %s, using %s",
+        [(s.adapter, s.source) for s in local],
+        local[0].adapter,
+    )
     return CaptureSupport(True, adapter=local[0].adapter)
 
 
