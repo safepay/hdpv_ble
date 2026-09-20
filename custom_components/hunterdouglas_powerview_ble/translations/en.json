@@ -58,7 +58,8 @@
       "capture_failed": "Capturing the key failed. Check the log for details.",
       "capture_unsupported": "This installation cannot capture a key. It needs a local Bluetooth adapter — a Bluetooth proxy cannot advertise.",
       "capture_not_linux": "Capturing a key needs BlueZ, which is Linux only.",
-      "capture_no_local_adapter": "Bluetooth here comes from a remote proxy, which can only scan. Capturing a key needs a local adapter on the machine running Home Assistant."
+      "capture_no_local_adapter": "Bluetooth here comes from a remote proxy, which can only scan. Capturing a key needs a local adapter on the machine running Home Assistant.",
+      "capture_legacy_adapter": "This Bluetooth adapter only supports legacy advertising, which is not enough to present a shade. Capturing a key needs a Bluetooth 5.0 adapter."
     },
     "abort": {
       "already_configured": "Device is already configured",

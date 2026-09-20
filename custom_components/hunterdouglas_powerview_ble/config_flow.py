@@ -293,14 +293,15 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
             data[CONF_HUB_URL] = self._hub_url
         return self.async_create_entry(title="PowerView Home", data=data)
 
-    def _show_homekey_form(
+    async def _show_homekey_form(
         self, step_id: str, errors: dict[str, str], **placeholders: str
     ) -> ConfigFlowResult:
         """Render the key-source form, pre-filling the hub URL when discovered."""
         return self.async_show_form(
             step_id=step_id,
             data_schema=_homekey_schema(
-                self._hub_url, async_capture_support(self.hass).supported
+                self._hub_url,
+                (await async_capture_support(self.hass)).supported,
             ),
             errors=errors,
             description_placeholders={
@@ -324,7 +325,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
 
     async def _async_capture(self) -> tuple[bytes, bool]:
         """Advertise as an unadopted shade until a key is written."""
-        support = async_capture_support(self.hass)
+        support = await async_capture_support(self.hass)
         if not support.supported or support.adapter is None:
             self._capture_error = support.reason or "capture_unsupported"
             return b"", False
@@ -385,7 +386,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
                 "capture_identity_taken" if foreign else "capture_nothing_seen"
             )
         errors = {"key_method": self._capture_error}
-        return self._show_homekey_form(self._capture_origin, errors)
+        return await self._show_homekey_form(self._capture_origin, errors)
 
     async def _finish_capture(self) -> ConfigFlowResult:
         """Complete whichever step asked for the capture."""
@@ -554,7 +555,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         ):
             return await self._create_entry()
 
-        return self._show_homekey_form(
+        return await self._show_homekey_form(
             "zeroconf_confirm", errors, name=self._hub_url
         )
 
@@ -583,7 +584,7 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         elif await self._validate_homekey_input(user_input, errors):
             return self._reconfigure_result(entry)
 
-        return self._show_homekey_form("reconfigure", errors)
+        return await self._show_homekey_form("reconfigure", errors)
 
     def _reconfigure_result(
         self, entry: config_entries.ConfigEntry
@@ -625,4 +626,4 @@ class ConfigFlow(config_entries.ConfigFlow, domain=DOMAIN):
         ):
             return await self._create_entry()
 
-        return self._show_homekey_form("user", errors)
+        return await self._show_homekey_form("user", errors)

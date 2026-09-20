@@ -284,6 +284,31 @@ def _managed_objects() -> dict[str, dict[str, dict[str, Variant]]]:
     return tree
 
 
+async def async_max_adv_len(adapter: str) -> int | None:
+    """Return the longest advertisement this adapter will take, or None.
+
+    31 is the legacy limit and means the controller has no extended
+    advertising; the payload here needs 45 bytes, which BlueZ then splits
+    across the scan response. That leaves the shade discoverable but is a
+    Bluetooth 4.x controller, and those have not been seen to accept the
+    incoming connection that adoption depends on.
+    """
+    bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+    try:
+        path = f"/org/bluez/{adapter}"
+        introspection = await bus.introspect(BLUEZ, path)
+        proxy = bus.get_proxy_object(BLUEZ, path, introspection)
+        advertising: Any = proxy.get_interface(ADV_MANAGER)
+        caps = await advertising.get_supported_capabilities()
+        value = caps.get("MaxAdvLen")
+        return int(value.value) if value is not None else None
+    except Exception:  # noqa: BLE001
+        LOGGER.debug("keycapture: could not read advertising capabilities")
+        return None
+    finally:
+        bus.disconnect()
+
+
 async def async_capture_key(adapter: str, timeout: float) -> tuple[bytes, bool]:
     """Advertise as an unadopted shade until a home key is written.
 
