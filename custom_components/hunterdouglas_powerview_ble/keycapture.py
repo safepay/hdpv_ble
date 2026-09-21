@@ -44,11 +44,6 @@ SET_KEY_CMD: Final[tuple[int, int]] = (0xFB, 0x02)
 # advertisement and offer it as a shade to set up.
 EMU_NAME: Final[str] = "myPVcover"
 
-# Bytes the advertisement needs: flags, the 128-bit service UUID,
-# manufacturer data and the local name. Past the 31-byte legacy limit, so
-# it wants a controller with extended advertising.
-ADVERT_BYTES_NEEDED: Final[int] = 45
-
 # Status byte of a bare acknowledgement. 0x00 is success; shades answer
 # 0x04 for a bad length and 0x80 for a bad field (PV_ERROR_CODES in
 # scripts/shade_report.py).
@@ -176,20 +171,7 @@ async def async_capture_support(hass: HomeAssistant) -> CaptureSupport:
         [(s.adapter, s.source) for s in local],
         local[0].adapter,
     )
-    adapter = local[0].adapter
-    from .keycapture_bluez import async_max_adv_len  # noqa: PLC0415
-
-    max_adv = await async_max_adv_len(adapter)
-    if max_adv is not None and max_adv < ADVERT_BYTES_NEEDED:
-        LOGGER.debug(
-            "keycapture: %s takes %d advertisement bytes, %d needed",
-            adapter,
-            max_adv,
-            ADVERT_BYTES_NEEDED,
-        )
-        return CaptureSupport(False, "capture_legacy_adapter")
-
-    return CaptureSupport(True, adapter=adapter)
+    return CaptureSupport(True, adapter=local[0].adapter)
 
 
 def async_is_own_advert(hass: HomeAssistant, address: str) -> bool:
