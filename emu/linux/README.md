@@ -4,12 +4,16 @@ Makes a Linux host's own Bluetooth adapter impersonate a PowerView shade. Adopt
 it into your home with the PowerView app and the app hands over your home key,
 which the emulator prints to the console.
 
-Nothing has to be installed permanently — booting a live USB stick and using
-the machine's own Bluetooth adapter is enough. For the ESP32 version of the
-same trick, see [`../PV_BLE_cover`](../PV_BLE_cover); for how it fits into
-setup, see [Getting the home key](../../README.md#getting-the-home-key).
+**You do not need a Linux machine, or to install Linux on anything** — see
+[Running from a live USB](#running-from-a-live-usb), which is the easiest route
+for most people. For the ESP32 version of the same trick, see
+[`../PV_BLE_cover`](../PV_BLE_cover); for how it fits into setup, see
+[Getting the home key](../../README.md#getting-the-home-key).
 
 ## Quick start
+
+Already on Linux? Start here. Otherwise do
+[Running from a live USB](#running-from-a-live-usb) first, then come back.
 
 1. Install the dependencies (Debian/Ubuntu shown; see
    [Requirements](#requirements) if your distro differs):
@@ -42,6 +46,49 @@ setup, see [Getting the home key](../../README.md#getting-the-home-key).
 > Step 6 is not optional if you intend to run the emulator again. While
 > myPVcover is still adopted, the app talks to it encrypted with the key it
 > installed, and the emulator has no way to answer.
+
+## Running from a live USB
+
+If you don't run Linux, this is the simplest route. The emulator only has to be
+up for the minute or two it takes the app to hand over the key, and a live USB
+session runs entirely in RAM: it installs nothing, touches no partition, and
+leaves the computer exactly as it was after you reboot. The laptop you use
+every day is a fine candidate, as long as its Bluetooth works.
+
+1. **Write Ubuntu Desktop to a USB stick.** Download the ISO from
+   [ubuntu.com](https://ubuntu.com/download/desktop) and write it with
+   [Rufus](https://rufus.ie) (Windows), [balenaEtcher](https://etcher.balena.io)
+   (any OS) or Ubuntu's own Startup Disk Creator. Use an 8 GB or larger stick —
+   everything on it is erased.
+
+2. **Boot from the stick.** Restart and pick it from the firmware's boot menu,
+   usually F12, F2, Esc or Del during startup depending on the manufacturer.
+   Ubuntu's boot loader is signed, so Secure Boot does not need turning off.
+
+3. **Choose "Try Ubuntu" — not Install.** Nothing has to be written to disk.
+
+4. **Connect to WiFi**, so the remaining steps can download.
+
+5. **Fetch the emulator.** Both files must land in the same directory; there is
+   no need to clone the repository:
+
+   ```sh
+   mkdir ~/pvemu && cd ~/pvemu
+   wget https://raw.githubusercontent.com/safepay/hdpv_ble/main/emu/linux/shade_emulator.py
+   wget https://raw.githubusercontent.com/safepay/hdpv_ble/main/emu/linux/ble_peripheral.py
+   ```
+
+6. Follow the [Quick start](#quick-start) from step 1. The packages it installs
+   go into RAM along with everything else, and disappear on reboot.
+
+> [!WARNING]
+> A live session keeps nothing. Save the home key somewhere off the stick — a
+> note on your phone, or a photo of the screen — **before you reboot**, or you
+> will have to do all of this again.
+
+If the live desktop shows no Bluetooth at all, the machine's adapter isn't
+supported by the kernel on that ISO. A cheap USB Bluetooth dongle is the
+fallback; try another machine before buying one.
 
 ## Requirements
 

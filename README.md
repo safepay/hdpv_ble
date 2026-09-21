@@ -109,7 +109,9 @@ effort first:
 
 1. **Emulate a shade on Linux.** [`emu/linux`](/emu/linux) makes a Linux host's
    own Bluetooth adapter pretend to be a shade; adding `myPVcover` to your home
-   in the PowerView app hands the key over. Booting a live USB stick is enough.
+   in the PowerView app hands the key over. You don't need a Linux machine —
+   [booting a live USB stick](/emu/linux/README.md#running-from-a-live-usb) on
+   the computer you already have installs nothing and works fine.
 2. **Emulate a shade on an ESP32.** The [same emulator](/emu/PV_BLE_cover) as a
    sketch, for an ESP32 with at least 2 MiB flash and 128 KiB RAM such as an
    [Adafruit QT Py ESP32-S3](https://www.adafruit.com/product/5426). Flash it,
