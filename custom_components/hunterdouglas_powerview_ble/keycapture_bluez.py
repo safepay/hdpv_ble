@@ -426,6 +426,31 @@ async def _watch_connections(bus: MessageBus) -> None:
     bus.add_message_handler(handler)
 
 
+async def async_adapter_ready(adapter: str) -> bool:
+    """Whether BlueZ will let us advertise and serve GATT on this adapter.
+
+    Home Assistant lists a scanner per adapter it knows of, which is not the
+    same as BlueZ currently offering the peripheral role on it: an adapter
+    that has been unplugged, renumbered or is not yet ready still appears
+    there, and asking for its interfaces then raises instead of failing
+    usefully.
+    """
+    bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
+    try:
+        introspection = await bus.introspect(BLUEZ, f"/org/bluez/{adapter}")
+        names = {interface.name for interface in introspection.interfaces}
+        missing = {GATT_MANAGER, ADV_MANAGER} - names
+    except Exception:  # noqa: BLE001
+        LOGGER.debug("keycapture: %s could not be introspected", adapter)
+        return False
+    else:
+        if missing:
+            LOGGER.debug("keycapture: %s is missing %s", adapter, sorted(missing))
+        return not missing
+    finally:
+        bus.disconnect()
+
+
 def _export_objects(
     bus: MessageBus, responder: ShadeResponder, captured: asyncio.Event
 ) -> list[str]:

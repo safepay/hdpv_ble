@@ -171,7 +171,13 @@ async def async_capture_support(hass: HomeAssistant) -> CaptureSupport:
         [(s.adapter, s.source) for s in local],
         local[0].adapter,
     )
-    return CaptureSupport(True, adapter=local[0].adapter)
+    adapter = local[0].adapter
+    from .keycapture_bluez import async_adapter_ready  # noqa: PLC0415
+
+    if not await async_adapter_ready(adapter):
+        return CaptureSupport(False, "capture_adapter_unavailable")
+
+    return CaptureSupport(True, adapter=adapter)
 
 
 def async_is_own_advert(hass: HomeAssistant, address: str) -> bool:
