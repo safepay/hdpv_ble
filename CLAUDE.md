@@ -162,7 +162,7 @@ mypy .
 codespell -L hass
 ```
 
-Minimum supported Home Assistant is `2024.8.0`, declared in `hacs.json`;
+Minimum supported Home Assistant is `2024.11.0`, declared in `hacs.json`;
 `requirements.txt` pins the version CI develops against.
 
 The integration's brand assets are already registered in
