@@ -18,12 +18,6 @@ PowerView app.
 
 - A Linux host with a BLE-capable Bluetooth adapter and BlueZ ≥ 5.50
   (`bluetoothd` running; tested on BlueZ 5.72).
-- A Bluetooth 5.0+ adapter with LE Extended Advertising support. The
-  advertisement (flags, 128-bit service UUID, manufacturer data and local
-  name) comes to 45 bytes, over the 31-byte legacy advertising limit, so it
-  only fits under extended advertising — this is what the `btmon` hint below
-  is actually showing. A legacy-only 4.x adapter fails `RegisterAdvertisement`
-  outright.
 - `python3-dbus`, `python3-gi` (PyGObject) and `python3-cryptography` —
   install from your distro, e.g. `sudo apt install python3-dbus python3-gi
   python3-cryptography`. The first two wrap system D-Bus/GLib libraries and
@@ -41,9 +35,9 @@ sudo python3 shade_emulator.py -v
 ```
 
 Pass `--adapter hci1` to pick an adapter other than the first one BlueZ
-reports as GATT/advertising-capable — adding a 5.0 dongle to a host that
-already has a radio gives you two, and the numbering is not guaranteed, so
-check `hciconfig -a` first. `-v` logs every decoded message;
+reports as GATT/advertising-capable — a host with both a built-in radio and
+a dongle has two, and the numbering is not guaranteed, so check
+`hciconfig -a` first. `-v` logs every decoded message;
 without it, only key events (registration, the extracted home key) are
 logged.
 
@@ -84,7 +78,7 @@ what it told the controller to do:
 ```sh
 sudo btmon &
 sudo python3 shade_emulator.py -v &
-# btmon output should show an LE Set (Extended) Advertising Data command
+# btmon output should show an LE Set Advertising Data command
 # containing "Company: Hunter Douglas Inc (2073)" and local name "myPVcover"
 ```
 
