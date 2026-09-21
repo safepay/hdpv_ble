@@ -281,6 +281,18 @@ class _Advertisement(ServiceInterface):
         """Return the name the app will offer to adopt."""
         return EMU_NAME
 
+    @dbus_property(access=PropertyAccess.READ)
+    def Discoverable(self) -> "b":
+        """Advertise as generally discoverable.
+
+        Without this BlueZ follows the adapter, which on a Home Assistant
+        host is not discoverable, and it then omits the flags field
+        altogether -- the advertisement goes out as a service UUID and
+        manufacturer data with no `02 01 06` in front of it. The sketch
+        sets those flags explicitly and a real shade carries them.
+        """
+        return True
+
     @method()
     def Release(self) -> None:
         """Handle BlueZ dropping the advertisement."""
