@@ -103,26 +103,36 @@ later through **⋮ → Reconfigure**.
 
 ### Getting the home key
 
-Every shade in a home shares one key. If you have a G3 hub, the setup form will
-fetch it for you — skip to [Connecting a hub](#connecting-a-hub). Otherwise there
-are three ways to obtain it:
+Every shade in a home shares one key, and where it can come from depends on
+whether you have a G3 gateway.
 
-1. **Adopt an emulated shade.** The [shade emulator](/emu/PV_BLE_cover) runs on
-   an ESP32 (≥ 2 MiB flash, ≥ 128 KiB RAM) such as an
+**With a gateway**, the setup form fetches the key itself — skip to
+[Connecting a hub](#connecting-a-hub). If the form cannot reach it,
+[`scripts/extract_gateway3_homekey.py`](scripts/extract_gateway3_homekey.py)
+pulls the same key over HTTP; plain Python, any OS, no hardware.
+
+**Without a gateway**, the key has to be taken from a shade or out of the
+PowerView app. Least effort first:
+
+1. **Emulate a shade on Linux.** [`emu/linux`](/emu/linux) makes a Linux host's
+   own Bluetooth adapter pretend to be a shade; adding `myPVcover` to your home
+   in the PowerView app hands the key over. Booting a live USB stick is enough —
+   nothing has to be installed, and the machine's own Bluetooth adapter will do.
+2. **Emulate a shade on an ESP32.** The [same emulator](/emu/PV_BLE_cover) as a
+   sketch, for an ESP32 with at least 2 MiB flash and 128 KiB RAM such as an
    [Adafruit QT Py ESP32-S3](https://www.adafruit.com/product/5426). Flash it,
-   connect over serial, then add the shade `myPVcover` to your home in the
-   PowerView app. The log prints `set shade key: \xx\xx...`. Copy it, then delete
-   the emulated shade from the app. No hardware? The [Linux port](/emu/linux)
-   runs the same emulator directly on a Linux host's own Bluetooth adapter.
-2. **Extract it from a gateway.** [`scripts/extract_gateway3_homekey.py`](scripts/extract_gateway3_homekey.py)
-   pulls the key from a working PowerView gateway.
-3. **Recover it from the app.** The key sits in the PowerView app's own database,
-   so running the app under Android on a PC gets you to it —
+   connect over serial, then adopt `myPVcover` as above; the log prints
+   `set shade key: \xx\xx...`. Worth it only if you have the board already.
+3. **Read the PowerView app's database.** The key is stored there, so running
+   the app under Android on a PC reaches it —
    [`scripts/extract_homekey_waydroid.sh`](scripts/extract_homekey_waydroid.sh)
    walks through installing Waydroid, sideloading the app and reading the key
    out. Tested on Ubuntu 24.04 only. There is also
    [this community forum post](https://community.home-assistant.io/t/hunter-douglas-powerview-gen-3-integration/424836/228)
    describing the manual route.
+
+Delete the emulated shade from the app once you have the key — routes 1 and 2
+leave it registered in your home otherwise.
 
 ### Connecting a hub
 
