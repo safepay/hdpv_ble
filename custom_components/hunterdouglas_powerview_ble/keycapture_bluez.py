@@ -529,6 +529,37 @@ async def async_capture_key(adapter: str, timeout: float) -> tuple[bytes, bool]:
         advertising: Any = proxy.get_interface(ADV_MANAGER)
         adapter_iface: Any = proxy.get_interface("org.bluez.Adapter1")
 
+        # Dumped so two hosts can be compared without a shell on either.
+        # Roles, ExperimentalFeatures and the interface list all vary with
+        # the BlueZ build, and anything the app reads from BlueZ's own GAP
+        # or GATT services is invisible from inside this application.
+        with contextlib.suppress(Exception):
+            props: Any = proxy.get_interface("org.freedesktop.DBus.Properties")
+            adapter_props = await props.call_get_all("org.bluez.Adapter1")
+            LOGGER.debug(
+                "keycapture: adapter %s",
+                {
+                    k: v.value
+                    for k, v in adapter_props.items()
+                    if k
+                    in (
+                        "Name",
+                        "Alias",
+                        "Powered",
+                        "Discoverable",
+                        "Pairable",
+                        "Roles",
+                        "ExperimentalFeatures",
+                        "Modalias",
+                        "Class",
+                    )
+                },
+            )
+            LOGGER.debug(
+                "keycapture: bluez interfaces %s",
+                sorted(i.name for i in introspection.interfaces),
+            )
+
         # BlueZ answers the Generic Access service itself, serving the
         # adapter's Alias as the device name -- reads of it never reach this
         # application. A peer that resolves our services and then leaves
