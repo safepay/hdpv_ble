@@ -162,6 +162,7 @@ class _InertCharacteristic(ServiceInterface):
         self._service_path = service_path
         self._flags = flags
         self._value = value
+        self._notifying = False
 
     @dbus_property(access=PropertyAccess.READ)
     def UUID(self) -> "s":
@@ -183,6 +184,21 @@ class _InertCharacteristic(ServiceInterface):
         """Serve the stored value."""
         LOGGER.debug("keycapture: read of %s", self._uuid)
         return self._value
+
+    @dbus_property(access=PropertyAccess.READ)
+    def Notifying(self) -> "b":
+        """Whether a client is subscribed. Required by BlueZ for notify."""
+        return self._notifying
+
+    @method()
+    def StartNotify(self) -> None:
+        """Accept a subscription."""
+        self._notifying = True
+
+    @method()
+    def StopNotify(self) -> None:
+        """Drop a subscription."""
+        self._notifying = False
 
     @method()
     def WriteValue(self, value: "ay", options: "a{sv}") -> None:
@@ -216,6 +232,16 @@ class _CoverCharacteristic(ServiceInterface):
     def Flags(self) -> "as":
         """Return the characteristic's GATT flags."""
         return ["notify", "write", "write-without-response"]
+
+    @dbus_property(access=PropertyAccess.READ)
+    def Notifying(self) -> "b":
+        """Whether a client is subscribed.
+
+        org.bluez.GattCharacteristic1 requires this of any characteristic
+        flagged notify. Without it a client cannot subscribe, which is
+        exactly where adoption stopped: services resolved, then nothing.
+        """
+        return self._notifying
 
     @dbus_property(access=PropertyAccess.READ)
     def Value(self) -> "ay":
@@ -329,6 +355,7 @@ def _managed_objects() -> dict[str, dict[str, dict[str, Variant]]]:
                 "Flags": Variant(
                     "as", ["notify", "write", "write-without-response"]
                 ),
+                "Notifying": Variant("b", False),
             }
         },
         COVER_XXX_PATH: {
@@ -338,6 +365,7 @@ def _managed_objects() -> dict[str, dict[str, dict[str, Variant]]]:
                 "Flags": Variant(
                     "as", ["notify", "write", "write-without-response"]
                 ),
+                "Notifying": Variant("b", False),
             }
         },
         FW_SERVICE_PATH: {
