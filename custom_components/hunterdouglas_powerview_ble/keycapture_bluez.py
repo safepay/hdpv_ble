@@ -463,6 +463,42 @@ async def async_adapter_ready(adapter: str) -> bool:
         bus.disconnect()
 
 
+async def _adopt_shade_identity(adapter_iface: Any) -> tuple[str | None, bool | None]:
+    """Make the adapter look like a shade, returning what to put back.
+
+    BlueZ answers the Generic Access service itself and takes the device
+    name from Alias, so a peer reading it would otherwise get the Home
+    Assistant host's name. A host also keeps the adapter unpairable, which
+    a shade waiting to be adopted is not.
+    """
+    previous_alias: str | None = None
+    previous_pairable: bool | None = None
+    with contextlib.suppress(Exception):
+        previous_alias = await adapter_iface.get_alias()
+        await adapter_iface.set_alias(EMU_NAME)
+        LOGGER.debug("keycapture: adapter alias %r -> %r", previous_alias, EMU_NAME)
+    with contextlib.suppress(Exception):
+        previous_pairable = await adapter_iface.get_pairable()
+        if not previous_pairable:
+            await adapter_iface.set_pairable(True)
+            LOGGER.debug("keycapture: adapter pairable False -> True")
+    return previous_alias, previous_pairable
+
+
+async def _restore_shade_identity(
+    adapter_iface: Any, previous_alias: str | None, previous_pairable: bool | None
+) -> None:
+    """Put back whatever _adopt_shade_identity changed."""
+    if previous_alias is not None:
+        with contextlib.suppress(Exception):
+            await adapter_iface.set_alias(previous_alias)
+            LOGGER.debug("keycapture: adapter alias restored to %r", previous_alias)
+    if previous_pairable is False:
+        with contextlib.suppress(Exception):
+            await adapter_iface.set_pairable(False)
+            LOGGER.debug("keycapture: adapter pairable restored to False")
+
+
 def _export_objects(
     bus: MessageBus, responder: ShadeResponder, captured: asyncio.Event
 ) -> list[str]:
@@ -528,6 +564,7 @@ async def async_capture_key(adapter: str, timeout: float) -> tuple[bytes, bool]:
     captured = asyncio.Event()
     exported: list[str] = []
     previous_alias: str | None = None
+    previous_pairable: bool | None = None
     adapter_iface: Any = None
 
     bus = await MessageBus(bus_type=BusType.SYSTEM).connect()
@@ -572,30 +609,9 @@ async def async_capture_key(adapter: str, timeout: float) -> tuple[bytes, bool]:
                 sorted(i.name for i in introspection.interfaces),
             )
 
-        # BlueZ answers the Generic Access service itself, serving the
-        # adapter's Alias as the device name -- reads of it never reach this
-        # application. A peer that resolves our services and then leaves
-        # without touching anything has looked at something we do not serve,
-        # and the host's own name where a shade's should be is the candidate.
-        with contextlib.suppress(Exception):
-            previous_alias = await adapter_iface.get_alias()
-            await adapter_iface.set_alias(EMU_NAME)
-            LOGGER.debug(
-                "keycapture: adapter alias %r -> %r", previous_alias, EMU_NAME
-            )
-
-        # BlueZ will say what the controller can actually do. MaxAdvLen of 31
-        # means legacy advertising only, and the payload here does not fit in
-        # 31 bytes -- BlueZ splits it across the scan response, which leaves
-        # the shade visible but is a sign the adapter is a Bluetooth 4.x one.
-        with contextlib.suppress(Exception):
-            caps = await advertising.get_supported_capabilities()
-            instances = await advertising.get_supported_instances()
-            LOGGER.debug(
-                "keycapture: adapter capabilities %s, %s advertising slots free",
-                {k: v.value for k, v in caps.items()},
-                instances,
-            )
+        previous_alias, previous_pairable = await _adopt_shade_identity(
+            adapter_iface
+        )
 
         with contextlib.suppress(Exception):
             await _watch_connections(bus)
@@ -613,10 +629,10 @@ async def async_capture_key(adapter: str, timeout: float) -> tuple[bytes, bool]:
         with contextlib.suppress(Exception):
             await gatt.call_unregister_application(ROOT)
     finally:
-        if previous_alias is not None:
-            with contextlib.suppress(Exception):
-                await adapter_iface.set_alias(previous_alias)
-                LOGGER.debug("keycapture: adapter alias restored to %r", previous_alias)
+        if adapter_iface is not None:
+            await _restore_shade_identity(
+                adapter_iface, previous_alias, previous_pairable
+            )
         for path_ in exported:
             with contextlib.suppress(Exception):
                 bus.unexport(path_)
