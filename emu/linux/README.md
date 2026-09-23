@@ -139,7 +139,9 @@ interoperable with the real PowerView app.
 - `shade_emulator.py`'s `ShadeProtocol` implements the full command set from
   the sketch's `decode()` — product info, position/scene/time/config writes,
   HW diagnostics, power status, identify, factory reset and the `0xFB02`
-  home-key exchange.
+  home-key exchange, plus the `0xFF12` MAC-address request that newer app
+  versions make during adoption. `0xFF12` is the one command answered with
+  two notifications, an ACK followed by the data.
 - The advertisement matches the sketch's manufacturer data: company ID 2073
   (Hunter Douglas), same 9-byte payload keyed by `TYP_ID`.
 - `ble_peripheral.py` is a small, sketch-independent BlueZ D-Bus GATT-server

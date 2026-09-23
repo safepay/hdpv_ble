@@ -46,7 +46,9 @@ LOGGER = logging.getLogger("shade_emulator")
 
 NAME = "myPVcover"
 SW_VERSION = 391
-SERIAL_NR = "01234567890ABCDEF"
+# Must match bytes 2..9 of the selector-5 hardware-diagnostics response
+# below, represented there as an eight-byte little-endian value.
+SERIAL_NR = "525C5D59429AA2D1"
 TYP_ID = 42
 MODEL_ID = 224
 FW_REVISION = 27
@@ -75,14 +77,22 @@ BAT_CHAR_UUID = "00002a19-0000-1000-8000-00805f9b34fb"
 ZERO_KEY = b"\x00" * 16
 
 # Static responses, verbatim from PV_BLE_cover.ino.
-RET_F1DD = bytes(  # product info
-    [0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x87, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00]
-)
+RET_F1DD = bytes([  # product info
+    0x00, 0x04, 0x01, 0x00, 0x00, 0x00,
+    SW_VERSION & 0xFF, (SW_VERSION >> 8) & 0xFF,
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+])
 RET_FFDD = bytes([  # HW diagnostics
     0x00, 0x05, 0xD1, 0xA2, 0x9A, 0x42, 0x59, 0x5D, 0x5C, 0x52, 0x1B, 0x00, 0x00, 0x00,
     SW_VERSION & 0xFF, (SW_VERSION >> 8) & 0xFF, 0x00, 0x00,
     0x5F, 0x9C, 0x02, 0x00, 0x5F, 0x9C, 0x02, 0x00,
     TYP_ID & 0xFF, MODEL_ID & 0xFF, 0x08,
+])
+# The app reads a MAC address at response offsets 14..19. Allowing for the
+# four-byte header, that is payload bytes 10..15 below.
+RET_FF12 = bytes([  # get MAC address
+    0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+    0x12, 0x34, 0x56, 0xAB, 0xCD, 0xEF,
 ])
 RET_FFDE = bytes([0x08, 0x00, 0x02, 0x26, 0x72, 0x01, 0x59, 0x01, 0x00])  # power status
 RET_FA5B = bytes(  # get scene
@@ -117,15 +127,16 @@ class ShadeProtocol:
             LOGGER.debug("encrypted (%d): %s", len(response), response.hex(" "))
         return response
 
-    def decode(self, data_raw: bytes) -> bytes | None:
+    def decode(self, data_raw: bytes) -> list[bytes]:
         """Handle one write to the cover characteristic.
 
-        Returns the bytes to notify back, or None if this command
-        doesn't answer.
+        Returns the notifications to send back, in order, or an empty
+        list if this command doesn't answer. Most commands answer with
+        a single notification; 0xFF12 answers with two.
         """
         LOGGER.debug("BLE data: %s", data_raw.hex(" "))
         if len(data_raw) < 4:
-            return None
+            return []
 
         if self.home_key != ZERO_KEY:
             data_dec = self._crypt(data_raw)
@@ -144,10 +155,10 @@ class ShadeProtocol:
 
     def _handle(  # noqa: C901, PLR0911, PLR0912
         self, command: int, data_dec: bytes, data_raw: bytes, body: bytes, data_len: int
-    ) -> bytes | None:
+    ) -> list[bytes]:
         if command == 0xF1DD:
             LOGGER.info("get product info.")
-            return self._set_response(data_dec, RET_F1DD)
+            return [self._set_response(data_dec, RET_F1DD)]
         if command == 0xF701:
             struct_bytes = body[:9].ljust(9, b"\x00")
             pos1, pos2, pos3, tilt, velocity = struct.unpack("<HHHHB", struct_bytes)
@@ -155,27 +166,33 @@ class ShadeProtocol:
                 "set position: pos1 %.2f%%, pos2 %d, pos3 %d, tilt %d, velocity %d",
                 pos1 / 100.0, pos2, pos3, tilt, velocity,
             )
-            return None
+            return [self._set_response(data_dec)]
         if command == 0xF711:
             LOGGER.info("identify: %d times", body[0] if body else 0)
-            return self._set_response(data_dec)
+            return [self._set_response(data_dec)]
         if command == 0xF7B8:
             LOGGER.info("stop.")
-            return None
+            return [self._set_response(data_dec)]
         if command == 0xF7BA:
             LOGGER.info("activate scene #%d", body[0] if body else 0)
-            return None
+            return [self._set_response(data_dec)]
         if command == 0xFA5A:
             LOGGER.info("set scene #%d", body[0] if body else 0)
-            return self._set_response(data_dec, RET_FA5A)
+            return [self._set_response(data_dec, RET_FA5A)]
         if command == 0xFA5B:
             LOGGER.info("get scene #%d", body[0] if body else 0)
-            return self._set_response(data_dec, RET_FA5B)
+            return [self._set_response(data_dec, RET_FA5B)]
         if command == 0xFAEA:
             LOGGER.info("reset scene automations:")
-            return self._set_response(data_dec)
+            return [self._set_response(data_dec)]
         if command == 0xFB02:
-            return self._set_shade_key(data_dec, data_raw, data_len)
+            return [self._set_shade_key(data_dec, data_raw, data_len)]
+        if command == 0xFF12:
+            # Answered asynchronously: an immediate ACK, then the data. Newer
+            # app versions wait for that second notification, so a lone ACK
+            # leaves adoption hanging.
+            LOGGER.info("get mac address.")
+            return [self._set_response(data_dec), self._set_response(data_dec, RET_FF12)]
         if command == 0xFF77:
             b = body[:7].ljust(7, b"\x00")
             year = b[0] | (b[1] << 8)
@@ -183,36 +200,40 @@ class ShadeProtocol:
                 "set time: %d-%d-%d %d:%d:%d",
                 year, b[2], b[3], b[4], b[5], b[6],
             )
-            return self._set_response(data_dec)
+            return [self._set_response(data_dec)]
         if command == 0xFF87:
             b = body[:6].ljust(6, b"\x00")
             LOGGER.info(
                 "set sunrise %d:%d:%d, sunset %d:%d:%d",
                 b[0], b[1], b[2], b[3], b[4], b[5],
             )
-            return self._set_response(data_dec)
+            return [self._set_response(data_dec)]
         if command == 0xFFD7:
             b = body[:2].ljust(2, b"\x00")
             LOGGER.info(
                 "set shade configuration: 0x%02X, status LED: %s",
                 b[0], "on" if b[1] else "off",
             )
-            return self._set_response(data_dec)
+            return [self._set_response(data_dec)]
         if command == 0xFFDD:
+            # Selector 4 asks for product info through the same command.
+            if data_len == 1 and body[:1] == b"\x04":
+                LOGGER.info("get product info.")
+                return [self._set_response(data_dec, RET_F1DD)]
             LOGGER.info("get HW diagnostics.")
-            return self._set_response(data_dec, RET_FFDD)
+            return [self._set_response(data_dec, RET_FFDD)]
         if command == 0xFFDE:
             LOGGER.info("get power status.")
-            return self._set_response(data_dec, RET_FFDE)
+            return [self._set_response(data_dec, RET_FFDE)]
         if command == 0xFFDF:
             LOGGER.info("set power type: %d", body[0] if body else 0)
-            return self._set_response(data_dec)
+            return [self._set_response(data_dec)]
         if command == 0xFFEE:
             LOGGER.info("factory reset.")
-            return self._set_response(data_dec)
+            return [self._set_response(data_dec)]
 
         LOGGER.warning("unknown message 0x%04X (try ACK)", command)
-        return self._set_response(data_dec)
+        return [self._set_response(data_dec)]
 
     def _set_shade_key(self, data_dec: bytes, data_raw: bytes, data_len: int) -> bytes:
         LOGGER.info("set shade key: %s", "".join(f"\\x{b:02X}" for b in data_raw[4:]))
@@ -271,9 +292,13 @@ class CoverCharacteristic(Characteristic):
         self.protocol = protocol
 
     def write_value(self, value: bytes, options: dict) -> None:
-        """Run the write through the protocol and notify back any response."""
-        response = self.protocol.decode(value)
-        if response:
+        """Run the write through the protocol and notify back any responses.
+
+        Each notification is a separate PropertiesChanged signal, which
+        BlueZ delivers in the order they were emitted, so a command that
+        answers twice needs no delay between the two.
+        """
+        for response in self.protocol.decode(value):
             self.notify(response)
 
 
