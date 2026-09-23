@@ -113,8 +113,10 @@ come back with them.
   reaches the combined work, and `user_settings.h` is wolfSSL's own GPLv2
   template. This is deliberate, documented in `emu/README.md`, and **must not be
   "fixed"** by relicensing to match the root LICENSE — patman15 and Dustin
-  Brewer both hold copyright there. `emu/` is also byte-identical to upstream,
-  so leave it that way unless there is hardware to test a change on.
+  Brewer both hold copyright there. `emu/PV_BLE_cover/` is still byte-identical
+  to upstream, while `emu/README.md` and the `emu/linux/` BlueZ port are
+  fork-only additions. Either way, nothing under `emu/` changes without
+  hardware to test it on.
 - The version lives in **one** place: `version` in `manifest.json`. (The
   sibling `ha_google_weather` repo keeps a second copy in `const.py`; this one
   does not — don't port that half of the release workflow back in.)
