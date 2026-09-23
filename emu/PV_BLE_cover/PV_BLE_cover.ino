@@ -175,7 +175,7 @@ void decode(BLECharacteristic *pChar) {
   Serial.printf("\t  message: SRV: %02x, CMD %02x, SEQ %i, LEN %i\n", msg.serviceID, msg.cmdID, msg.sequence, msg.data_len);
 
   // special responses (static data!)
-  const byte ret_valF1DD[] = { 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, 0x87, 0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };                                                                                                                                                // product info
+  const byte ret_valF1DD[] = { 0x00, 0x04, 0x01, 0x00, 0x00, 0x00, (uint8_t)(SW_VERSION & 0xFF), (uint8_t)(SW_VERSION >> 8), 0x00, 0x00, 0x00, 0x00, 0x00, 0x00 };                                                                                                  // product info
   // FF12 expects a MAC address at bytes 14..19. Accounting for the
   // 4-byte header, the static MAC address is modeled at bytes 10..15 below
   const byte ret_valFF12[] = { 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x12, 0x34, 0x56, 0xab, 0xcd, 0xef };
