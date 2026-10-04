@@ -10,6 +10,8 @@ TIMEOUT: Final[int] = 5
 # Ceiling on one attempt to open the link and subscribe. A shade in a bad state
 # was seen to hold a connect for ~25 s before failing, with the command lock
 # held throughout, so an unbounded wait wedges every command to that shade.
+# _connect retries once, so the worst-case lock hold is ~80 s: two attempts of
+# this plus two TIMEOUT*2 teardowns.
 CONNECT_TIMEOUT: Final[int] = 30
 
 CONF_HOME_KEY: Final[str] = "home_key"
