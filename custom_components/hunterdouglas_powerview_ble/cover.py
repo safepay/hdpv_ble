@@ -223,8 +223,13 @@ class PowerViewCoverBase(PassiveBluetoothCoordinatorEntity[PVCoordinator], Cover
                 # report movement in between advertisements.
                 disconnect=False,
             )
-        except BleakError as err:
-            LOGGER.error("Failed to %s for '%s': %s", description, self.name, err)
+        except (BleakError, TimeoutError) as err:
+            LOGGER.error(
+                "Failed to %s for '%s': %s",
+                description,
+                self.name,
+                err or type(err).__name__,
+            )
             return False
         self.async_write_ha_state()
         return True
@@ -275,7 +280,7 @@ class PowerViewCoverBase(PassiveBluetoothCoordinatorEntity[PVCoordinator], Cover
             await self._coord.api.stop()
             self._reset_target_position()
             self.async_write_ha_state()
-        except BleakError as err:
+        except (BleakError, TimeoutError) as err:
             LOGGER.error("Failed to stop cover '%s': %s", self.name, err)
 
 

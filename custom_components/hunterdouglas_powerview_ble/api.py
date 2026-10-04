@@ -24,7 +24,7 @@ from homeassistant.components.cover import (
 )
 from homeassistant.util import dt as dt_util
 
-from .const import LOGGER, TIMEOUT
+from .const import CONNECT_TIMEOUT, LOGGER, TIMEOUT
 
 UUID_COV_SERVICE: Final[str] = normalize_uuid_str("fdc1")
 UUID_TX: Final[str] = "cafe1001-c0ff-ee01-8000-a110ca7ab1e0"
@@ -792,24 +792,72 @@ class PowerViewBLE:
             return
 
         start: float = time.time()
-        self._client = await establish_connection(
-            BleakClient,
-            self._ble_device,
-            self.name,
-            disconnected_callback=self._on_disconnect,
-            ble_device_callback=lambda: self._ble_device,
-            services=[
-                UUID_COV_SERVICE,
-                UUID_DEV_SERVICE,
-            ],
-        )
-        await self._client.start_notify(UUID_TX, self._notification_handler)
+        try:
+            await self._open_link()
+        except (BleakError, TimeoutError) as ex:
+            # A failed handshake can leave BlueZ with a half-built device
+            # (StartNotify "UnknownObject"). _open_link has already torn the
+            # link down, so try once more from scratch. Warning level: with
+            # debug off this is the only trace of a shade that needed a
+            # second go.
+            LOGGER.warning(
+                "%s: connect failed (%s: %s), retrying once",
+                self.name,
+                type(ex).__name__,
+                ex or "no detail",
+            )
+            try:
+                await self._open_link()
+            except (BleakError, TimeoutError) as ex2:
+                LOGGER.warning(
+                    "%s: retry failed too (%s: %s)",
+                    self.name,
+                    type(ex2).__name__,
+                    ex2 or "no detail",
+                )
+                raise
+            LOGGER.warning("%s: reconnected after a failed first attempt", self.name)
 
         LOGGER.debug("\tconnect took %is", time.time() - start)
 
         # Only on a fresh connection -- the early return above means a shade
         # that is already connected does not get a second push.
         await self._set_time()
+
+    async def _open_link(self) -> None:
+        """Open one bounded connection and subscribe to notifications."""
+        try:
+            async with asyncio.timeout(CONNECT_TIMEOUT):
+                self._client = await establish_connection(
+                    BleakClient,
+                    self._ble_device,
+                    self.name,
+                    disconnected_callback=self._on_disconnect,
+                    ble_device_callback=lambda: self._ble_device,
+                    services=[
+                        UUID_COV_SERVICE,
+                        UUID_DEV_SERVICE,
+                    ],
+                )
+                await self._client.start_notify(UUID_TX, self._notification_handler)
+        except (BleakError, TimeoutError) as ex:
+            # start_notify failing leaves a connected client with no
+            # subscription; _connect would then take "already connected" and
+            # write to it, never to hear a reply.
+            await self._drop_link()
+            if isinstance(ex, TimeoutError) and not str(ex):
+                # asyncio.timeout raises a bare TimeoutError, which logs as
+                # nothing.
+                raise TimeoutError(f"no connection after {CONNECT_TIMEOUT}s") from ex
+            raise
+
+    async def _drop_link(self) -> None:
+        """Disconnect whatever is left of a failed attempt. Never raises."""
+        try:
+            async with asyncio.timeout(TIMEOUT * 2):
+                await self._client.disconnect()
+        except (BleakError, TimeoutError) as ex:
+            LOGGER.debug("%s: dropping link failed: %s", self.name, ex)
 
     async def disconnect(self) -> None:
         """Disconnect the device and stop notifications."""
