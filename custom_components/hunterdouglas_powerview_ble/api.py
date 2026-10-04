@@ -430,6 +430,17 @@ class PowerViewBLE:
                             await self._client.disconnect()  # device disconnects itself
                 except Exception as ex:
                     LOGGER.error("Error: %s - %s", type(ex).__name__, ex)
+                    # A command is still pending, and any caller that coalesced
+                    # into it has already returned success. It cannot be sent,
+                    # so drop it rather than leave it for the next caller to
+                    # overwrite unseen.
+                    if self._cmd_next is not None:
+                        LOGGER.debug(
+                            "%s: dropping unsent %s after failure",
+                            self.name,
+                            self._cmd_next[0][0],
+                        )
+                        self._cmd_next = None
                     raise
             # Safe to test outside the lock: releasing it does not yield to
             # the loop, so nothing can slip in between the release and here.
