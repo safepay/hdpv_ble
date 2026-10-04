@@ -310,11 +310,12 @@ async def _async_setup_shade(
     # DeviceInfo later. Failures are retried from the advertisement handler.
     try:
         await coordinator.query_dev_info()
-    except (BleakError, TimeoutError):
+    except (BleakError, TimeoutError) as ex:
         LOGGER.debug(
-            "Initial device info query failed for %s (%s); will retry via adverts",
+            "Initial device info query failed for %s (%s): %s; will retry via adverts",
             friendly_name,
             address,
+            ex or type(ex).__name__,
         )
 
     # Power source, in order of preference: the hub's record, then a cached

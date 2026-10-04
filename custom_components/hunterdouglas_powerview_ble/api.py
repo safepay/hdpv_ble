@@ -24,7 +24,7 @@ from homeassistant.components.cover import (
 )
 from homeassistant.util import dt as dt_util
 
-from .const import LOGGER, TIMEOUT
+from .const import CONNECT_TIMEOUT, LOGGER, TIMEOUT
 
 UUID_COV_SERVICE: Final[str] = normalize_uuid_str("fdc1")
 UUID_TX: Final[str] = "cafe1001-c0ff-ee01-8000-a110ca7ab1e0"
@@ -783,33 +783,58 @@ class PowerViewBLE:
         return True
 
     async def _connect(self) -> None:
-        """Connect to the device and setup notification if not connected."""
-
-        LOGGER.debug("Connecting %s", self.name)
-
+        """Connect and subscribe if not already, retrying once on failure."""
         if self.is_connected:
-            LOGGER.debug("%s already connected", self.name)
             return
 
         start: float = time.time()
-        self._client = await establish_connection(
-            BleakClient,
-            self._ble_device,
-            self.name,
-            disconnected_callback=self._on_disconnect,
-            ble_device_callback=lambda: self._ble_device,
-            services=[
-                UUID_COV_SERVICE,
-                UUID_DEV_SERVICE,
-            ],
-        )
-        await self._client.start_notify(UUID_TX, self._notification_handler)
+        try:
+            await self._open_link()
+        except (BleakError, TimeoutError):
+            # A failed handshake can leave BlueZ with a half-built device; a
+            # second attempt from scratch usually clears it.
+            await self._open_link()
+        LOGGER.debug("%s connect took %is", self.name, time.time() - start)
 
-        LOGGER.debug("\tconnect took %is", time.time() - start)
-
-        # Only on a fresh connection -- the early return above means a shade
-        # that is already connected does not get a second push.
+        # Fresh connection only: the early return skips it for a live one.
         await self._set_time()
+
+    async def _open_link(self) -> None:
+        """Open one bounded connection and subscribe to notifications."""
+        client: BleakClient | None = None
+        try:
+            async with asyncio.timeout(CONNECT_TIMEOUT):
+                client = await establish_connection(
+                    BleakClient,
+                    self._ble_device,
+                    self.name,
+                    disconnected_callback=self._on_disconnect,
+                    ble_device_callback=lambda: self._ble_device,
+                    services=[
+                        UUID_COV_SERVICE,
+                        UUID_DEV_SERVICE,
+                    ],
+                )
+                await client.start_notify(UUID_TX, self._notification_handler)
+                # Publish only once subscribed, so _connect never mistakes a
+                # half-built link for a live one.
+                self._client = client
+        except (BleakError, TimeoutError) as ex:
+            # Drop the link we were building, not self._client.
+            await self._drop_link(client)
+            if isinstance(ex, TimeoutError) and not str(ex):
+                raise TimeoutError(f"no connection after {CONNECT_TIMEOUT}s") from ex
+            raise
+
+    async def _drop_link(self, client: BleakClient | None) -> None:
+        """Disconnect a half-built link. Best effort; never raises."""
+        if client is None:
+            return
+        try:
+            async with asyncio.timeout(TIMEOUT * 2):
+                await client.disconnect()
+        except Exception as ex:  # noqa: BLE001 - teardown must never mask the original failure
+            LOGGER.debug("%s: dropping link failed: %s", self.name, ex)
 
     async def disconnect(self) -> None:
         """Disconnect the device and stop notifications."""

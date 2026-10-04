@@ -2,6 +2,8 @@
 
 from typing import Final
 
+from bleak.exc import BleakError
+
 from homeassistant.components.bluetooth.passive_update_coordinator import (
     PassiveBluetoothCoordinatorEntity,
 )
@@ -12,6 +14,7 @@ from homeassistant.components.button import (
 )
 from homeassistant.const import EntityCategory
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import HomeAssistantError
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 
 from . import ConfigEntryType, async_setup_shade_platform
@@ -65,4 +68,10 @@ class PowerViewButton(PassiveBluetoothCoordinatorEntity[PVCoordinator], ButtonEn
     async def async_press(self) -> None:
         """Handle the button press."""
         LOGGER.debug("identify cover")
-        await self._coord.api.identify()
+        try:
+            await self._coord.api.identify()
+        except (BleakError, TimeoutError) as err:
+            # Surfaces in the UI instead of as an unhandled traceback.
+            raise HomeAssistantError(
+                f"Could not reach {self._coord.name}: {err or type(err).__name__}"
+            ) from err
