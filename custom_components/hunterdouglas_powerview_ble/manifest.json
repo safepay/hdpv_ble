@@ -7,7 +7,6 @@
       "manufacturer_id": 2073
     }
   ],
-  "categories": ["blinds_curtains"],
   "codeowners": ["@safepay"],
   "config_flow": true,
   "dependencies": ["bluetooth_adapters"],
