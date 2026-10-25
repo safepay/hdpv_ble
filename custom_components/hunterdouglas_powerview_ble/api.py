@@ -65,6 +65,7 @@ SHADE_TYPE: Final[dict[int, str]] = {
     70: "Curtain, Right Stack",
     71: "Curtain, Split Stack",
     84: "Vignette",
+    108: "Duette DuoMotion",  # issue #62; not in aiopvapi/openHAB
     # top down (single rail, inverted position)
     7: "Top Down",
     # top down bottom up (dual rail)
