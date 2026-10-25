@@ -31,6 +31,9 @@ the maintainer's own.
 - Branch names: `<type>/<kebab-case-summary>`, e.g. `fix/tilt-on-closed-position`.
 - Commit subjects use conventional prefixes: `fix:`, `feat:`, `chore:`.
 - Write a body when the *why* isn't obvious from the subject; skip it for trivia.
+- One PR, one concern. Don't fold unrequested tidy-ups — a metadata field, a
+  drive-by rename — into an unrelated change, least of all ones only CI can
+  test. A separate concern is a separate branch.
 
 **PR descriptions and commit bodies are public. Keep them short and factual** —
 what changed, how to use it, anything a user must know. They read as a changelog
@@ -38,6 +41,10 @@ entry, not as a report. Do not narrate an investigation, list problems found
 along the way, or raise unresolved issues awaiting a decision. Those go to the
 maintainer directly or into an issue. If a caveat has to live in the repo, a
 brief comment at the relevant line is the right size.
+
+**A comment posted on an issue answers the person, and stops there.** Same bar:
+no narrated investigation, no pre-announcing work that hasn't been agreed yet.
+If a reply runs past a few lines, it is doing too much — trim it.
 
 ## Layout
 
@@ -167,8 +174,20 @@ codespell -L hass
 Minimum supported Home Assistant is `2024.11.0`, declared in `hacs.json`;
 `requirements.txt` pins the version CI develops against.
 
-The integration's brand assets are already registered in
-[home-assistant/brands](https://github.com/home-assistant/brands) under
-`custom_integrations/hunterdouglas_powerview_ble`, so HACS validation runs
-**without** an `ignore: brands` — unlike the sibling repo. If the brands check
-starts failing, fix it rather than ignoring it. The source PNGs live in `img/`.
+`manifest.json` is validated only by hassfest, which runs in CI, not locally —
+a bad manifest change is not caught before you push. The `categories` values are
+an enum hassfest checks against that **pinned** version, so a value current core
+accepts (`blinds_curtains`, say) still fails when it postdates the pin.
+`categories` is optional for custom integrations and only clears a HACS warning,
+so don't add it — or any manifest field — on spec; confirm it validates first.
+
+The brand assets ship **inside the integration**, at
+`custom_components/hunterdouglas_powerview_ble/brand/` (`icon.png`, `icon@2x.png`,
+`logo.png`, `logo@2x.png`, copied from the sources in `img/`). HACS's brands
+check looks there before `home-assistant/brands`, so validation passes
+**without** an `ignore: brands`. The domain is **not** in
+[home-assistant/brands](https://github.com/home-assistant/brands), and Home
+Assistant only serves a local `brand/` folder from `2026.3.0` on, so users below
+that get no icon until the domain is registered there — that registration is
+still worth doing. If the brands check fails, restore the `brand/` folder, or
+register the domain, rather than adding an `ignore: brands`.
