@@ -162,7 +162,7 @@ The type ID is shown in the PowerView app under *product info → type ID*.
 
 Behaviour | Type IDs
 -- | --
-Position only | 1, 4, 5, 6, 10, 19, 26, 27, 28, 31, 32, 42, 49, 52, 53, 57, 69, 70, 71, 84
+Position only | 1, 4, 5, 6, 10, 19, 26, 27, 28, 31, 32, 42, 49, 52, 53, 57, 69, 70, 71, 84, 108
 Position and tilt | 51, 54, 55, 56, 62, 103
 Tilt only | 39, 40, 66
 Tilt when fully closed | 18, 23, 43, 44, 72
