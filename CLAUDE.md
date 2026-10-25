@@ -31,9 +31,6 @@ the maintainer's own.
 - Branch names: `<type>/<kebab-case-summary>`, e.g. `fix/tilt-on-closed-position`.
 - Commit subjects use conventional prefixes: `fix:`, `feat:`, `chore:`.
 - Write a body when the *why* isn't obvious from the subject; skip it for trivia.
-- One PR, one concern. Don't fold unrequested tidy-ups — a metadata field, a
-  drive-by rename — into an unrelated change, least of all ones only CI can
-  test. A separate concern is a separate branch.
 
 **PR descriptions and commit bodies are public. Keep them short and factual** —
 what changed, how to use it, anything a user must know. They read as a changelog
@@ -41,10 +38,6 @@ entry, not as a report. Do not narrate an investigation, list problems found
 along the way, or raise unresolved issues awaiting a decision. Those go to the
 maintainer directly or into an issue. If a caveat has to live in the repo, a
 brief comment at the relevant line is the right size.
-
-**A comment posted on an issue answers the person, and stops there.** Same bar:
-no narrated investigation, no pre-announcing work that hasn't been agreed yet.
-If a reply runs past a few lines, it is doing too much — trim it.
 
 ## Layout
 
