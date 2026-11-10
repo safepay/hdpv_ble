@@ -119,6 +119,7 @@ SHADE_CAPABILITIES: Final[dict[int, ShadeCapability]] = {
     55: ShadeCapability(has_tilt=True),
     56: ShadeCapability(has_tilt=True),
     62: ShadeCapability(has_tilt=True),
+    100: ShadeCapability(has_tilt=True),
     103: ShadeCapability(has_tilt=True),
     # tilt only (no position movement)
     39: ShadeCapability(has_tilt=True, tilt_only=True),
