@@ -89,6 +89,7 @@ SHADE_TYPE: Final[dict[int, str]] = {
     55: "Vertical Slats, Right Stack",
     56: "Vertical Slats, Split Stack",
     62: "Venetian, Tilt Anywhere",
+    100: "Venetian Wood Blinds, Tilt Anywhere",  # issue #66; not in aiopvapi/openHAB
     103: "Designer Banded, Tilt Anywhere",
     # duolite (dual overlapping fabrics)
     38: "Silhouette Duolite",
