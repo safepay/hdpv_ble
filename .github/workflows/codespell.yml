@@ -32,7 +32,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v7
         with:
-          python-version: "3.13.2"
+          python-version: "3.13"
 
       # Installed directly rather than from requirements.txt: this job needs no
       # Home Assistant, and codespell is unpinned there in any case.
