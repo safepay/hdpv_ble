@@ -472,17 +472,11 @@ class PowerViewCoverTDBUBottom(PowerViewCoverBase):
         pos = self._fresh_position(ATTR_CURRENT_POSITION)
         return OPEN_POSITION - pos if pos is not None else None
 
-    @callback
-    def _clamp_cover_limit(self, target: int) -> int | None:
-        """Stop the top rail being pulled down past the bottom rail.
-
-        That is a LOWER bound on the top rail (target >= bottom), not an upper
-        bound. (Previously coded as min(target, 100-bottom), which is the wrong
-        operator and was the cause of the top rail appearing "locked" once it
-        reached 100-bottom.)
-        """
-        bottom_position = self._fresh_position("position2")
-        return None if bottom_position is None else max(target, bottom_position)
+    # No _clamp_cover_limit: the interlock is left to the shade firmware, which
+    # refuses a crossing pair and settles on the rail boundary. A pre-send clamp
+    # against the other rail's *current* position pinned a rail behind where its
+    # partner was about to move, so scenes that drove both rails at once stalled
+    # one of them (issue #65).
 
     @callback
     def _get_shade_move(self, target: int) -> ShadeMove | None:
@@ -517,19 +511,9 @@ class PowerViewCoverTDBUTop(PowerViewCoverBase):
         """Return current position of the bottom rail."""
         return self._fresh_position("position2")
 
-    @callback
-    def _clamp_cover_limit(self, target: int) -> int | None:
-        """Stop the bottom rail rising past the top rail.
-
-        An UPPER bound (target <= top). PowerViewCoverTDBUBottom (the "Top
-        rail" entity) inverts position1 to get its own HA-facing position
-        (top_ha = 100 - raw_pos1), so this clamps against 100 - raw_pos1,
-        not the raw reading directly.
-        """
-        top_rail_raw = self._fresh_position(ATTR_CURRENT_POSITION)
-        if top_rail_raw is None:
-            return None
-        return min(target, OPEN_POSITION - top_rail_raw)
+    # No _clamp_cover_limit: see PowerViewCoverTDBUBottom. The shade arbitrates
+    # a crossing pair itself (observed on type-8 Duette: requested 20/70 from
+    # 100/0 settled at HA 70/70, device pos1+pos2=100).
 
     @callback
     def _get_shade_move(self, target: int) -> ShadeMove | None:
@@ -539,11 +523,6 @@ class PowerViewCoverTDBUTop(PowerViewCoverBase):
         concurrent top-rail command coalesce into one SET_POSITION that
         carries both targets, instead of the bottom command overwriting the
         top's intended position.
-
-        Pre-move clamps on each entity can still produce a crossed pair
-        (e.g. top→20 + bottom→70 from 100/0). On type-8 Duette firmware that
-        is fine: the shade refuses the cross and settles on the rail boundary
-        (observed: requested 20/70 ended at HA 70/70, device pos1+pos2=100).
         """
         return ShadeMove(pos1=KEEP_POSITION, pos2=target)
 
