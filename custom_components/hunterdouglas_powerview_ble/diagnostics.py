@@ -32,7 +32,7 @@ from homeassistant.helpers.aiohttp_client import async_get_clientsession
 from homeassistant.helpers.redact import async_redact_data
 
 from . import ConfigEntryType
-from .api import V2_RECORD_LEN, ShadeCmd
+from .api import SHADE_TYPE, V2_RECORD_LEN, ShadeCmd
 from .const import CONF_HOME_KEY, CONF_HUB_URL, DOMAIN, MFCT_ID
 from .coordinator import PVCoordinator
 
@@ -115,6 +115,14 @@ def _device(coord: PVCoordinator) -> dict[str, Any]:
     """Return the shade's identity: type, model and firmware revisions."""
     return {
         "type_id": coord.type_id,
+        # The integration's name for this type_id, and the device model shown in
+        # Home Assistant. None means the type is unrecognised: the shade still
+        # works as a plain lift cover, but no name or tilt/rail capability is
+        # mapped for it, so this is the first thing to check on an "add my shade"
+        # or "missing tilt" report.
+        "model_name": (
+            SHADE_TYPE.get(coord.type_id) if coord.type_id is not None else None
+        ),
         # None where the 0xFFDE probe was never run, failed, or came back with
         # a status byte saying the shade would not answer it.
         "power_type": coord.power_type,
