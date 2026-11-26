@@ -86,6 +86,11 @@
       "reset_mode": {
         "name": "Mode reset required"
       }
+    },
+    "sensor": {
+      "power_status": {
+        "name": "Power status (raw)"
+      }
     }
   }
 }

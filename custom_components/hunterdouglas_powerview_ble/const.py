@@ -26,3 +26,4 @@ SIGNAL_NEW_SHADE: Final[str] = f"{DOMAIN}_new_shade_{{entry_id}}"
 
 # attributes (do not change)
 ATTR_RSSI: Final[str] = "rssi"
+ATTR_POWER_STATUS: Final[str] = "power_status"
